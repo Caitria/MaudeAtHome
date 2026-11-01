@@ -12,6 +12,7 @@ they're deliberately not quoted.
 | Lenovo Smart Display 10 | Bedroom display (briefing, floorplan, sky) | **Discontinued** — used market only. Any Cast-enabled display works in its place; this one's 1920×1200 panel is why the bedroom pages are designed on a 1280×800 logical canvas |
 | Google Nest Hub Max | Kitchen display (on-demand casting) | Its webview is the weakest of the three displays — fine for briefing/sky/AQI/gallery-class pages, slower on heavy canvas |
 | Chromecast / Google TV (on the living-room TV) | TV target (dashboard, gallery, storm, dream) | 1920×1080. A TV with built-in Cast works the same |
+| Govee Smart Light Bars (a 2-bar kit, one control box) | The TV's light companion: takes a colour/brightness recipe per cast view | Must expose Govee's **LAN Control** toggle in the Govee Home app (a firmware update may be required before the toggle appears). Control is local UDP — no cloud account, no key. The bars are one device: both bars take the same colour |
 | The network | — | Pi and all displays must share one LAN (casting is local discovery). The controller page is LAN-only by design |
 
 Optional, not required: a rooftop SDR receiver if you want a local ADS-B

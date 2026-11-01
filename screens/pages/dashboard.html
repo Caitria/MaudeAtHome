@@ -18,6 +18,13 @@
      an ambient screen must not become a maintenance nag.
   The room/device data below is SAMPLE data in the original layout: replace
   the DEVICES/ROOMS entries with your own house (see docs/OPERATIONS.md).
+  TWO VOICES: the page alternates in place between this House board
+  (45 s) and a full-board "From your agent — the feed" phase (30 s, or
+  45 s across two item pages flipping every 15 s) rendered from a
+  feed-household.json file beside the page, in the same plum/glow
+  styling. Entering the feed phase re-fetches the file fresh; the phase
+  is skipped entirely whenever the feed is missing, empty, or > 90 min
+  old, so a deployment without a feed simply stays on the House board.
 -->
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -86,6 +93,53 @@
   .arcwrap { position: relative; }
   .arclabels { display: flex; justify-content: space-between; font-size: 15px; color: #A79BD6; margin-top: -6px; }
   .safe { color: #8FF5C8; }
+  /* Two voices: #phases stacks the House board and the From-your-agent
+     feed board in a single grid cell and crossfades between them. The
+     feed board wears this page's own plum/glow styling with peach
+     accents — the agent's voice in the house's clothes. */
+  #phases { display: grid; }
+  #phases > .phase { grid-area: 1 / 1; }
+  .phase { opacity: 0; visibility: hidden; transition: opacity 1.2s ease, visibility 0s linear 1.2s; }
+  .phase.on { opacity: 1; visibility: visible; transition: opacity 1.2s ease, visibility 0s linear 0s; }
+  #phaseFeed { display: flex; flex-direction: column; }
+  .feedmast { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 16px; }
+  .feedkick { font-size: 16px; letter-spacing: .28em; text-transform: uppercase; font-weight: 800;
+    color: #FFBE98; text-shadow: 0 0 14px rgba(255,160,90,.35); }
+  .feedtitle2 { font-size: 34px; font-weight: 660; color: #F4F1FF; margin-top: 6px;
+    text-shadow: 0 0 20px rgba(150,110,255,.25); }
+  .feedtitle2 .peach { color: #FFBE98; text-shadow: 0 0 18px rgba(255,170,100,.4); }
+  .feedmast-r { text-align: right; }
+  .feedstamp2 { font-size: 16px; color: #D9A679; font-variant-numeric: tabular-nums; }
+  .feedpages { font-size: 13px; color: #8F83BC; margin-top: 5px; letter-spacing: .16em; text-transform: uppercase; }
+  .feedgridwrap { flex: 1; display: grid; min-height: 0; }
+  .feedpage { grid-area: 1 / 1; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    gap: 18px; opacity: 0; visibility: hidden; transition: opacity .6s ease, visibility 0s linear .6s; }
+  .feedpage.on { opacity: 1; visibility: visible; transition: opacity .6s ease, visibility 0s linear 0s; }
+  .fcard { border-radius: 20px; background: rgba(20,12,44,.55); border: 1px solid rgba(150,120,255,.22);
+    border-top: 3px solid rgba(255,190,152,.55);
+    box-shadow: inset 0 0 50px rgba(88,40,180,.10), 0 14px 34px rgba(0,0,0,.35);
+    padding: 26px 30px; overflow: hidden; }
+  .fcard .chip { display: inline-block; font-size: 13px; font-weight: 800; letter-spacing: .16em;
+    text-transform: uppercase; padding: 5px 12px; border-radius: 999px; border: 1px solid currentColor;
+    color: #9D8FE8; margin-bottom: 14px; }
+  .fcard .chip.needs-you { color: #E8A0BF; }
+  .fcard .chip.today { color: #FFC53D; }
+  .fcard .chip.house { color: #5FC4B5; }
+  .fcard .chip.body { color: #8FF5C8; }
+  .fcard .chip.projects { color: #B79CFF; }
+  .fcard .chip.numbers { color: #7DD3FC; }
+  .fcard .chip.people { color: #FDA4AF; }
+  .fcard .chip.weekend { color: #FDBA74; }
+  .fcard .chip.memory { color: #C4B5FD; }
+  .fcard .chip.delight { color: #FDE68A; }
+  .fcard .fheadline { font-size: 30px; font-weight: 660; line-height: 1.25; color: #F4F1FF;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .fcard .fdetail { font-size: 20px; line-height: 1.45; color: #CFC7F2; margin-top: 10px;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .phaseind { letter-spacing: .18em; text-transform: uppercase; font-size: 13px; font-weight: 700;
+    color: rgba(167,155,214,.45); }
+  .phaseind .on { color: #FFBE98; text-shadow: 0 0 10px rgba(255,170,100,.5); }
+  .phaseind .phsep { margin: 0 8px; }
   footer { display: flex; justify-content: space-between; margin-top: 16px; font-size: 14.5px; color: rgba(167,155,214,.8); }
 </style>
 </head>
@@ -103,7 +157,8 @@
     </div>
   </header>
 
-  <div class="main">
+  <div id="phases">
+  <div class="main phase on" id="phaseHouse">
     <div class="plates">
       <div class="plate" id="plateDown"><div class="ptitle">Downstairs</div><div class="pnote">the vacuum's floor</div></div>
       <div class="plate" id="plateUp"><div class="ptitle">Upstairs</div><div class="pnote">studio over bedroom · bath over bath</div></div>
@@ -142,8 +197,27 @@
     </div>
   </div>
 
+  <div class="phase" id="phaseFeed" aria-hidden="true">
+    <div class="feedmast">
+      <div>
+        <div class="feedkick">🖋 The wider context</div>
+        <div class="feedtitle2">From your agent — <span class="peach">the feed</span></div>
+      </div>
+      <div class="feedmast-r">
+        <div class="feedstamp2" id="boardstamp"></div>
+        <div class="feedpages" id="boardpages"></div>
+      </div>
+    </div>
+    <div class="feedgridwrap">
+      <div class="feedpage on" id="feedpage0"></div>
+      <div class="feedpage" id="feedpage1"></div>
+    </div>
+  </div>
+  </div>
+
   <footer>
     <div>House states read from Home Assistant · sample snapshot (baked into this page — re-rendered by the snapshot job, see docs/OPERATIONS.md)</div>
+    <div class="phaseind"><span id="phIndHouse" class="on">House</span><span class="phsep">·</span><span id="phIndFeed">Feed</span></div>
     <div>Dashboard v2 — The House, Lit + House Pulse</div>
   </footer>
 </div>
@@ -235,6 +309,150 @@
   }
   window.addEventListener('resize', fit);
   fit(); sunTick(); setInterval(sunTick, 30000); setInterval(fit, 30000);
+</script>
+<script>
+/* Self-refresh: this page's HA states are baked in at render time by the
+   snapshot job (see docs/OPERATIONS.md), and a cast can sit on screen for
+   hours. Every 3 min, HEAD this page's own URL and compare Last-Modified /
+   ETag with the values first seen after load; when a fresher copy has been
+   deployed, reload in place — no re-cast needed. Failure-silent by design
+   (any fetch error = keep showing the current copy), and nothing runs
+   during the first 60 s after load. */
+(function () {
+  var seenLM = null, seenET = null;
+  function probe(baseline) {
+    fetch(location.pathname + '?_sr=' + Date.now(), { method: 'HEAD', cache: 'no-store' })
+      .then(function (r) {
+        var lm = r.headers.get('Last-Modified'), et = r.headers.get('ETag');
+        if (baseline) { seenLM = lm; seenET = et; return; }
+        if ((lm && seenLM && lm !== seenLM) || (et && seenET && et !== seenET)) location.reload();
+      })
+      .catch(function () { /* offline or server hiccup: stay on this copy */ });
+  }
+  setTimeout(function () { probe(true); }, 61000);
+  setInterval(function () { probe(false); }, 180000);
+})();
+</script>
+<script>
+/* Two voices: this page ALTERNATES in place between Phase A "THE HOUSE"
+   (the dashboard as built) and Phase B "FROM YOUR AGENT" (a full board
+   of feed-household.json items in this page's own styling). House 45 s
+   → 1.2 s crossfade → Feed 30 s → back; when the feed needs two item
+   pages (5–8 items) the Feed phase extends to 45 s and flips pages
+   every 15 s. Entering the Feed phase always re-fetches the file
+   fresh; a 5-min poll runs as backstop and re-renders the board if the
+   feed changed under it. The Feed phase is SKIPPED — the page simply
+   stays on the House and tries again next cycle — whenever the file is
+   missing, empty, or > 90 min old, so the board never opens on stale
+   items (a deployment with no feed file just never leaves the House).
+   First load always opens on the House. QA hooks, harmless in
+   production: ?phase=feed locks the Feed phase open (?feedpage=2
+   starts on page 2); ?house=N shortens the House phase to N seconds. */
+(function () {
+  var LABELS = { 'needs-you': 'Needs you', 'today': 'Today', 'house': 'House',
+    'body': 'Body', 'projects': 'Projects', 'numbers': 'Numbers',
+    'people': 'People', 'weekend': 'Weekend', 'memory': 'Memory', 'delight': 'Delight' };
+  var qs = new URLSearchParams(location.search);
+  var HOUSE_MS = (parseInt(qs.get('house'), 10) || 45) * 1000;
+  var FEED_MS_ONE = 30000, FEED_MS_TWO = 45000, SLOT_MS = 15000, STALE_MS = 90 * 60000;
+  var LOCK_FEED = qs.get('phase') === 'feed';
+  var START_PAGE = Math.max(0, (parseInt(qs.get('feedpage'), 10) || 1) - 1);
+  var elHouse = document.getElementById('phaseHouse'),
+      elFeed = document.getElementById('phaseFeed'),
+      indHouse = document.getElementById('phIndHouse'),
+      indFeed = document.getElementById('phIndFeed'),
+      pageEls = [document.getElementById('feedpage0'), document.getElementById('feedpage1')];
+  var phase = 'house', timers = [], slotTimer = null, slot = 0, pageCount = 0, curDoc = null;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function fmt(isoStr) {
+    var d = new Date(isoStr); if (isNaN(d)) return '';
+    var h = d.getHours(), ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    return h + ':' + String(d.getMinutes()).padStart(2, '0') + ' ' + ap;
+  }
+  function valid(doc) {
+    if (!doc || !Array.isArray(doc.items) || !doc.items.length) return false;
+    var gen = new Date(doc.generated_at).getTime();
+    return !isNaN(gen) && (Date.now() - gen) <= STALE_MS;
+  }
+  function fetchFeed() {
+    return fetch('feed-household.json?_=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (doc) { return valid(doc) ? doc : null; })
+      .catch(function () { return null; });
+  }
+  function cardHtml(i) {
+    return '<div class="fcard"><span class="chip ' + esc(i.type) + '">' +
+      esc(LABELS[i.type] || i.type) + '</span><div class="fheadline">' + esc(i.headline) +
+      '</div>' + (i.detail ? '<div class="fdetail">' + esc(i.detail) + '</div>' : '') + '</div>';
+  }
+  function buildPages(doc) {
+    var items = doc.items.slice(0, 8);
+    pageCount = Math.min(2, Math.ceil(items.length / 4));
+    for (var p = 0; p < 2; p++) {
+      pageEls[p].innerHTML = items.slice(p * 4, p * 4 + 4).map(cardHtml).join('');
+    }
+    document.getElementById('boardstamp').textContent = 'updated ' + fmt(doc.generated_at);
+    slot = Math.min(START_PAGE, pageCount - 1);
+    if (!LOCK_FEED) slot = 0;
+    showPage(slot);
+  }
+  function showPage(n) {
+    slot = ((n % pageCount) + pageCount) % pageCount;
+    for (var p = 0; p < 2; p++) pageEls[p].classList.toggle('on', p === slot);
+    document.getElementById('boardpages').textContent =
+      pageCount > 1 ? 'page ' + (slot + 1) + ' of ' + pageCount : '';
+  }
+  function showPhase(name) {
+    phase = name;
+    elHouse.classList.toggle('on', name === 'house');
+    elFeed.classList.toggle('on', name === 'feed');
+    elFeed.setAttribute('aria-hidden', name === 'feed' ? 'false' : 'true');
+    indHouse.classList.toggle('on', name === 'house');
+    indFeed.classList.toggle('on', name === 'feed');
+  }
+  function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
+  function clearTimers() {
+    timers.forEach(clearTimeout); timers = [];
+    if (slotTimer) { clearInterval(slotTimer); slotTimer = null; }
+  }
+  function enterHouse() {
+    clearTimers(); showPhase('house');
+    later(tryFeed, HOUSE_MS);
+  }
+  function tryFeed() {
+    fetchFeed().then(function (doc) {
+      if (!doc) { later(tryFeed, HOUSE_MS); return; } // skip: stay on House, next cycle
+      curDoc = doc; enterFeed(doc);
+    });
+  }
+  function enterFeed(doc) {
+    clearTimers(); buildPages(doc); showPhase('feed');
+    if (pageCount > 1) slotTimer = setInterval(function () { showPage(slot + 1); }, SLOT_MS);
+    if (!LOCK_FEED) later(enterHouse, pageCount > 1 ? FEED_MS_TWO : FEED_MS_ONE);
+  }
+  // Backstop poll: keep the cache honest and re-render under an open board.
+  setInterval(function () {
+    fetchFeed().then(function (doc) {
+      if (!doc) return;
+      var changed = !curDoc || curDoc.generated_at !== doc.generated_at;
+      curDoc = doc;
+      if (changed && phase === 'feed') { var keep = slot; buildPages(doc); showPage(Math.min(keep, pageCount - 1)); }
+    });
+  }, 300000);
+  if (LOCK_FEED) {
+    fetchFeed().then(function (doc) {
+      if (doc) { curDoc = doc; enterFeed(doc); }
+      else later(function () { if (phase === 'house') tryFeed(); }, 5000);
+    });
+  } else {
+    enterHouse();
+  }
+})();
 </script>
 </body>
 </html>

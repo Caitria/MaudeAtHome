@@ -9,45 +9,42 @@
   verified public-domain texts — do not edit wording from memory; check
   any replacement against a public-domain source before adding it.
 
-  THE PIECE — one night-long arc in five acts, driven by the local clock:
-    19:00–20:30  I. The Shore        empty shore, moon, water, opening poem
-    20:30–22:30  II. Foundations     bases land on every plot
-    22:30–01:30  III. The Rising     towers + the dome climb, windows kindle
-    01:30–05:30  IV. The Inhabited City  complete; poems continue; flicker
-    05:30–07:00  V. The Dissolution  city un-builds in reverse; Prospero last
-    07:00–19:00  daytime: The Shore, quiet, "the city returns at nightfall"
-  At 07:00 the Morning Paper briefing takes the screen (Pi schedule).
-
-  DETERMINISM: the city (plots, heights, neighbour-rule targets, build order,
-  window patterns) is generated from a seeded PRNG keyed to the NIGHT DATE
-  (the date of the 19:00 that starts the night). How much of the city exists
-  is a pure function of the clock: each act maps to a visible-segment count
-  (foundations grows 0 -> all base courses; rising grows bases -> complete;
-  dissolution shrinks complete -> 0 in reverse build order). A page loaded
-  at 23:40 therefore arrives at the correct half-risen city; deliveries and
-  poems animate on top of that schedule without owning it.
+  THE PIECE — runs on TIME ON SCREEN, not time of day. Elapsed seconds
+  since the page loaded drive two smoothstep anchor curves:
+    BUILD (city fraction standing): 0 s .46 → 30 s .58 → 2 min .72 →
+      5 min .88 → 10 min 1.0
+    RICH (glow, stars, fireflies, dome saturation): 0 s .52 → 30 s .63
+      → 2 min .78 → 5 min .92 → 11 min 1.0
+  The FIRST PAINT is already alive: nearly half the city standing, the
+  dome's glow lit, fireflies out, and the opening poem fading in. Four
+  elapsed movements name the deepening — I · Arrival (0-2 min),
+  II · The Unfurling (2-5 min), III · The Full Dome (5-12 min),
+  IV · The Deep Dome (12 min on) — then the curves hold at full and
+  richness breathes gently for as long as the page stays up. Every
+  parameter moves on the smooth curves; there are no jump cuts. The
+  wall clock's only remaining job is choosing the OPENING poem
+  (Coleridge at night, de la Mare in the morning, Yeats by day,
+  Tennyson at evening); no visual parameter depends on the time of day.
+  The city is generated from a seeded PRNG keyed to the calendar DATE —
+  the same skyline all day.
 
   FLIGHTS CARRY THE PARTS: the page polls the house ADS-B proxy
-  (http://CASTPI_LAN_IP:8081/adsb, adsb.lol via the caster Pi) every 60 s. When a
-  segment's scheduled moment arrives while the page watches, a light streak
-  descends from the sky to deliver it. The caption states the real aircraft
-  count feeding the night; if the feed fails, deliveries continue unguided
-  and the caption says so. Counts are real; streak timing is the schedule's.
+  (http://CASTPI_LAN_IP:8081/adsb, adsb.lol via the caster Pi) every
+  60 s. When a segment's build moment arrives while the page watches, a
+  light streak descends from the sky to deliver it. The caption states
+  the real aircraft count feeding the build; if the feed fails,
+  deliveries continue unguided and the caption says so. Counts are
+  real; streak timing is the build curve's.
 
-  POEMS: one fragment every ~4 min and at each act change, LARGE serif over
-  the scene (Direction 2 typography: the poem is an event, never a caption),
-  held ~30 s. Sequence follows the night: Coleridge's decree on the Shore,
-  "I would build that dome in air" during The Rising, de la Mare / Yeats /
-  Li Bai mid-night, and the FINAL fragment of the night is Prospero's
-  dissolution speech (bank #6), held longest, before the city finishes
-  un-building.
+  POEMS: the opening poem is on screen from the first seconds; then one
+  fragment every ~4 minutes of elapsed time, LARGE serif over the scene
+  (the poem is an event, never a caption), held ~30 s, rotating through
+  the bank in a fixed sequence that ends each cycle with Prospero's
+  speech (#6), held longest (50 s).
 
-  QA PARAMS: ?act=shore|foundations|rising|inhabited|dissolution locks an
-  act (progress fixed mid-act unless fast); ?fast=1 sweeps the locked act's
-  progress 0->1 over ~60 s (in clock mode it runs night time at ~1 night-
-  minute per real second); ?poem=N (0-based index into the POEMS array in
-  the script) pins poem N on screen; ?t=SECONDS pretends that many extra
-  seconds have passed on the clock.
+  QA PARAMS: ?t=SECONDS fast-forwards the elapsed arc by that many
+  seconds; ?fast=1 runs elapsed time at 60x; ?poem=N (0-based index
+  into the POEMS array) pins poem N on screen.
 
   PERFORMANCE: single canvas, pre-rendered glow sprites, no per-frame
   shadowBlur, segment cap ~140, ~30 fps cap, scale-to-fit 1920x1080 ->
@@ -91,7 +88,7 @@
   <div id="wordmark">Dream Mode</div>
   <div id="poem"><div id="poemlines"></div><div class="attr" id="poemattr"></div></div>
   <div id="chrome">
-    <div id="caption"><div class="k">Dream Mode — The Pleasure-Dome</div><div class="l" id="captionline">The shore is dark; the city is a rumour.</div></div>
+    <div id="caption"><div class="k">Dream Mode — The Pleasure-Dome</div><div class="l" id="captionline">The dome is already rising.</div></div>
     <div id="credit">Poems: public domain, verified — Coleridge · Shakespeare · Blake · Keats ·<br>Tennyson · Rossetti · Dickinson · Yeats · Poe · de la Mare · Frost · Li Bai</div>
   </div>
 </div>
@@ -102,37 +99,43 @@
   var W = 1920, H = 1080, SHORE = 812; // shore line y; water below
   var params = new URLSearchParams(location.search);
   var FAST = params.get('fast') === '1';
-  var LOCK_ACT = params.get('act');
   var PIN_POEM = params.has('poem') ? parseInt(params.get('poem'), 10) : -1;
   var T_OFF = params.has('t') ? parseFloat(params.get('t')) : 0;
+  var startStamp = Date.now();
+
+  // ---------- the only clock that matters now: time on screen ----------
+  function elapsed() { return T_OFF + (Date.now() - startStamp) / 1000 * (FAST ? 60 : 1); }
 
   // ---------- seeded PRNG (mulberry32) ----------
   function hashStr(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
-  // ---------- night clock ----------
-  // Night starts 19:00 local. Returns {key, elapsedMin} or {day:true}.
-  function nightState(now) {
-    var h = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
-    var start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 19, 0, 0);
-    if (h >= 19) return { key: start.toDateString(), elapsed: (now - start) / 60000, day: false };
-    if (h < 7) { var y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 19, 0, 0); return { key: y.toDateString(), elapsed: (now - y) / 60000, day: false }; }
-    return { key: start.toDateString(), elapsed: 0, day: true };
+  // ---------- the elapsed-time arc (v3) ----------
+  // Smoothstep-interpolated anchor curves. The scene is BORN at the first
+  // anchor — never at zero — and deepens on the requested milestones
+  // for: a visible deepening by ~30 s, ~2 min, ~5 min, full richness at
+  // ~10-12 min, then a breathing plateau.
+  function curve(anchors, e) {
+    if (e <= anchors[0][0]) return anchors[0][1];
+    for (var i = 1; i < anchors.length; i++) {
+      if (e <= anchors[i][0]) {
+        var u = (e - anchors[i - 1][0]) / (anchors[i][0] - anchors[i - 1][0]);
+        u = u * u * (3 - 2 * u);
+        return anchors[i - 1][1] + (anchors[i][1] - anchors[i - 1][1]) * u;
+      }
+    }
+    return anchors[anchors.length - 1][1];
   }
-  var ACTS = [
-    { id: 'shore',       name: 'I · The Shore',           from: 0,   to: 90 },
-    { id: 'foundations', name: 'II · Foundations',        from: 90,  to: 210 },
-    { id: 'rising',      name: 'III · The Rising',        from: 210, to: 390 },
-    { id: 'inhabited',   name: 'IV · The Inhabited City', from: 390, to: 630 },
-    { id: 'dissolution', name: 'V · The Dissolution',     from: 630, to: 720 }
+  var BUILD_A = [[0, 0.46], [30, 0.58], [120, 0.72], [300, 0.88], [600, 1], [720, 1]];   // fraction of the city standing
+  var RICH_A  = [[0, 0.52], [30, 0.63], [120, 0.78], [300, 0.92], [660, 1]];              // glow / stars / fireflies / saturation
+  var MOVEMENTS = [
+    { id: 'arrival',   name: 'I · Arrival',        to: 120 },
+    { id: 'unfurling', name: 'II · The Unfurling',  to: 300 },
+    { id: 'full',      name: 'III · The Full Dome', to: 720 },
+    { id: 'deep',      name: 'IV · The Deep Dome', to: Infinity }
   ];
-  function actAt(elapsed, day) {
-    if (day) return { act: ACTS[0], frac: 0.35 };
-    for (var i = 0; i < ACTS.length; i++) { var a = ACTS[i]; if (elapsed >= a.from && elapsed < a.to) return { act: a, frac: (elapsed - a.from) / (a.to - a.from) }; }
-    return { act: ACTS[4], frac: 1 };
-  }
+  function movementAt(e) { for (var i = 0; i < MOVEMENTS.length; i++) if (e < MOVEMENTS[i].to) return MOVEMENTS[i]; return MOVEMENTS[3]; }
 
-  // ---------- the poem bank — EXACT texts from the verified brief (§4) ----------
   var POEMS = [
     { n: 1,  lines: ['In Xanadu did Kubla Khan', 'A stately pleasure-dome decree:', 'Where Alph, the sacred river, ran', 'Through caverns measureless to man', 'Down to a sunless sea.'], attr: 'Samuel Taylor Coleridge — Kubla Khan, 1816' },
     { n: 2,  lines: ['I would build that dome in air,', 'That sunny dome! those caves of ice!'], attr: 'Samuel Taylor Coleridge — Kubla Khan, 1816' },
@@ -153,13 +156,19 @@
     { n: 18, lines: ['Life is an immense dream. Why toil?', 'All day long I drowse with wine'], attr: 'Li Bai — Awakening from Sleep on a Spring Day, trans. Obata, 1922' }
   ];
   var BANK = {}; POEMS.forEach(function (p) { BANK[p.n] = p; });
-  // Night sequence by act (bank numbers). Prospero (#6) is last, in Dissolution.
-  var ACT_POEMS = {
-    shore: [1, 3], foundations: [11, 7], rising: [2, 10, 13],
-    inhabited: [8, 16, 5, 15, 17, 12, 18, 4], dissolution: [9, 6]
-  };
+  // Rotation for the hours on screen (bank numbers). Prospero (#6) closes
+  // each full cycle and is held longest.
+  var SEQ = [1, 3, 11, 7, 2, 10, 13, 8, 16, 5, 15, 17, 12, 18, 4, 9, 6];
+  // The clock's one remaining job: it chooses the OPENING poem.
+  function openingBankNo() {
+    var h = new Date().getHours();
+    if (h >= 19 || h <= 4) return 1;   // night: Coleridge's decree
+    if (h <= 11) return 13;            // morning: de la Mare's moon
+    if (h <= 17) return 11;            // day: Yeats, the stolen child
+    return 8;                          // evening: Tennyson's fire-fly
+  }
 
-  // ---------- city generation (deterministic per night) ----------
+  // ---------- city generation (deterministic per calendar day) ----------
   function buildCity(seedKey) {
     var rnd = mulberry32(hashStr('pleasure-dome:' + seedKey));
     var plots = [], x = 120;
@@ -212,15 +221,6 @@
     return { plots: plots, segs: segs, byRank: byRank, total: segs.length, baseCount: baseCount };
   }
 
-  function visibleCount(actId, frac, city) {
-    if (actId === 'shore') return 0;
-    if (actId === 'foundations') return Math.round(city.baseCount * frac);
-    if (actId === 'rising') return Math.round(city.baseCount + (city.total - city.baseCount) * frac);
-    if (actId === 'inhabited') return city.total;
-    if (actId === 'dissolution') return Math.round(city.total * (1 - frac));
-    return 0;
-  }
-
   // ---------- moon (synodic approximation, as in Tonight's Sky) ----------
   function moonPhase() {
     var synodic = 29.53058867, ref = Date.UTC(2000, 0, 6, 18, 14) / 86400000, now = Date.now() / 86400000;
@@ -242,34 +242,28 @@
   };
   var HUECOL = { gold: '#FFD98A', cyan: '#8FE8FF', violet: '#C9A6FF' };
 
+  // ---------- world, built once at load ----------
+  var d0 = new Date();
+  var seedKey = d0.getFullYear() + '-' + (d0.getMonth() + 1) + '-' + d0.getDate();
+  var city = buildCity(seedKey);
   var stars = [];
-  function buildStars(key) {
-    var rnd = mulberry32(hashStr('stars:' + key)); stars = [];
+  (function () {
+    var rnd = mulberry32(hashStr('stars:' + seedKey));
     for (var i = 0; i < 300; i++) stars.push({ x: rnd() * W, y: rnd() * SHORE * 0.92, r: 0.4 + rnd() * 1.5, p: rnd() * 6.28, s: 0.3 + rnd() * 1.1 });
-  }
+  })();
+  var flies = [];
+  (function () {
+    var rnd = mulberry32(hashStr('flies:' + seedKey));
+    for (var i = 0; i < 42; i++) flies.push({ bx: rnd() * W, by: SHORE - 300 + rnd() * 400, ph: rnd() * 6.28, sp: 0.2 + rnd() * 0.5, sz: 9 + rnd() * 13, hue: rnd() < 0.7 ? 'gold' : 'cyan' });
+  })();
 
   // ---------- state ----------
   var state = {
-    nightKey: null, city: null, shownSegs: -1, landedAt: {}, streaks: [],
-    flights: null, flightsOk: false, actId: null, poemIdx: {},
-    lastPoemShownAt: 0, prosperoShown: false, startStamp: Date.now()
+    shownSegs: -1, landedAt: {}, streaks: [],
+    flights: null, flightsOk: false,
+    poemStarted: false, lastPoemElapsed: 0, seqIdx: 0, openNo: openingBankNo()
   };
-
-  function currentActInfo() {
-    var now = new Date(Date.now() + T_OFF * 1000);
-    var ns = nightState(now);
-    if (LOCK_ACT) {
-      var a = ACTS.filter(function (x) { return x.id === LOCK_ACT; })[0] || ACTS[0];
-      var frac;
-      if (FAST) { var el = ((Date.now() - state.startStamp) / 1000) % 75; frac = Math.min(1, el / 60); }
-      else frac = a.id === 'inhabited' ? 1 : a.id === 'dissolution' ? 0.45 : a.id === 'shore' ? 0.35 : 0.6;
-      return { act: a, frac: frac, ns: ns, day: false, locked: true };
-    }
-    var elapsed = ns.elapsed;
-    if (FAST) elapsed += ((Date.now() - state.startStamp) / 1000) * (59 / 60); // ~1 night-minute per real second
-    var info = actAt(elapsed, ns.day);
-    return { act: info.act, frac: info.frac, ns: ns, day: ns.day, locked: false };
-  }
+  state.seqIdx = SEQ.indexOf(state.openNo) + 1; // rotation continues after the opener
 
   // ---------- flights ----------
   function pollFlights() {
@@ -282,31 +276,27 @@
   // ---------- poems ----------
   var poemEl = document.getElementById('poem'), poemLines = document.getElementById('poemlines'), poemAttr = document.getElementById('poemattr');
   var poemBusyUntil = 0;
-  function showPoem(p, holdMs) {
+  function showPoem(p, holdMs, quick) {
     poemLines.innerHTML = p.lines.map(function (l) { return '<div class="line">' + l + '</div>'; }).join('');
     poemAttr.textContent = p.attr;
+    poemEl.style.transition = quick ? 'opacity 1.4s ease-in-out' : '';
     poemEl.classList.add('on');
     poemBusyUntil = Date.now() + (holdMs || 30000) + 6000; // hold + fade-out
     setTimeout(function () { poemEl.classList.remove('on'); }, holdMs || 30000);
-    state.lastPoemShownAt = Date.now();
+    state.lastPoemElapsed = elapsed();
   }
-  function poemScheduler(info) {
+  function poemScheduler() {
     if (PIN_POEM >= 0) return; // QA pin handled at boot
-    var now = Date.now();
-    if (now < poemBusyUntil) return;
-    var actChanged = info.act.id !== state.actId;
-    if (!actChanged && state.lastPoemShownAt !== 0 && now - state.lastPoemShownAt <= 240000) return;
-    // Prospero (#6): reserved for Dissolution's second half; held longest;
-    // it is the last poem of the night.
-    if (info.act.id === 'dissolution' && info.frac >= 0.4 && !state.prosperoShown) {
-      state.prosperoShown = true; showPoem(BANK[6], 50000); return;
+    if (!state.poemStarted) {
+      // The opening poem is up from the first paint — never an empty wait.
+      state.poemStarted = true;
+      showPoem(BANK[state.openNo], 30000, true);
+      return;
     }
-    var list = ACT_POEMS[info.act.id] || [12];
-    var idx = state.poemIdx[info.act.id] || 0;
-    var bankNo = list[Math.min(idx, list.length - 1)];
-    if (info.act.id === 'dissolution' && bankNo === 6) bankNo = 14; // never early
-    state.poemIdx[info.act.id] = (idx + 1) % list.length;
-    showPoem(BANK[bankNo], 30000);
+    if (Date.now() < poemBusyUntil) return;
+    if (elapsed() - state.lastPoemElapsed < 235) return; // a poem every ~4 min on screen
+    var no = SEQ[state.seqIdx % SEQ.length]; state.seqIdx++;
+    showPoem(BANK[no], no === 6 ? 50000 : 30000, false);
   }
 
   // ---------- drawing ----------
@@ -336,21 +326,21 @@
 
   var SEG_H = 30;
   function segRect(seg) {
-    var p = state.city.plots[seg.plot];
-    var rnd = mulberry32(hashStr('jit:' + state.nightKey + ':' + seg.plot + ':' + seg.level));
+    var p = city.plots[seg.plot];
+    var rnd = mulberry32(hashStr('jit:' + seedKey + ':' + seg.plot + ':' + seg.level));
     var jit = (rnd() - 0.5) * 3;
     return { x: p.x + jit, y: SHORE - (seg.level + 1) * SEG_H, w: p.w - Math.abs(jit), h: SEG_H, plot: p };
   }
 
   function render(t) {
-    var info = currentActInfo();
-    if (state.nightKey !== info.ns.key || !state.city) {
-      state.nightKey = info.ns.key; state.city = buildCity(info.ns.key); buildStars(info.ns.key);
-      state.shownSegs = -1; state.landedAt = {};
-    }
-    var city = state.city;
-    var target = visibleCount(info.act.id, info.frac, city);
+    var e = elapsed();
+    var build = curve(BUILD_A, e);
+    var rich = curve(RICH_A, e);
+    // Plateau breathing: once the dome is full, richness gently oscillates.
+    var breath = e >= 720 ? 1 + 0.06 * Math.sin(t / 11000) : 1;
+    var target = Math.round(city.total * build);
     // Deliveries: segments newly crossing into existence get a streak + glow.
+    // (The opening city is simply THERE — no streaks for what pre-exists.)
     if (state.shownSegs >= 0 && target > state.shownSegs) {
       for (var rank = state.shownSegs; rank < target; rank++) {
         var seg = city.byRank[rank];
@@ -368,13 +358,21 @@
     var sky = ctx.createLinearGradient(0, 0, 0, SHORE);
     sky.addColorStop(0, '#070826'); sky.addColorStop(0.6, '#0A0930'); sky.addColorStop(1, '#100C3A');
     ctx.fillStyle = sky; ctx.fillRect(0, 0, W, SHORE);
-    stars.forEach(function (st) {
-      ctx.globalAlpha = 0.25 + 0.5 * (0.5 + 0.5 * Math.sin(t / 1000 * st.s + st.p));
+    var nStars = Math.floor(stars.length * (0.5 + 0.5 * rich));
+    for (var si = 0; si < nStars; si++) {
+      var st = stars[si];
+      ctx.globalAlpha = (0.25 + 0.5 * (0.5 + 0.5 * Math.sin(t / 1000 * st.s + st.p))) * (0.6 + 0.4 * rich);
       ctx.fillStyle = '#E6EBFF'; ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2); ctx.fill();
-    });
+    }
     ctx.globalAlpha = 1;
     drawMoon(moonPhase().age);
     ctx.save(); ctx.globalAlpha = 0.16; ctx.drawImage(SPR.violet, W * 0.28 - 420, SHORE - 560, 840, 560); ctx.restore();
+    // The dome's ambient glow — present from the first frame, deepening
+    // with richness, breathing on the plateau.
+    var domePlot = city.plots[7], dcx0 = domePlot.x + domePlot.w / 2;
+    var glowW = 460 + 340 * rich;
+    ctx.save(); ctx.globalAlpha = (0.10 + 0.20 * rich) * breath;
+    ctx.drawImage(SPR.violet, dcx0 - glowW / 2, SHORE - glowW * 0.62, glowW, glowW * 0.66); ctx.restore();
 
     // --- water ---
     var wat = ctx.createLinearGradient(0, SHORE, 0, H);
@@ -396,7 +394,7 @@
         ctx.fillStyle = '#191238';
         ctx.beginPath(); ctx.arc(dcx, dbase, r.w / 2, Math.PI, 0); ctx.fill();
         ctx.strokeStyle = 'rgba(190,160,255,.5)'; ctx.lineWidth = 1.6; ctx.stroke();
-        ctx.save(); ctx.globalAlpha = fresh ? 0.75 : 0.4; ctx.drawImage(SPR.violet, dcx - 90, dbase - 118, 180, 180); ctx.restore();
+        ctx.save(); ctx.globalAlpha = fresh ? 0.75 : (0.3 + 0.3 * rich) * breath; ctx.drawImage(SPR.violet, dcx - 90, dbase - 118, 180, 180); ctx.restore();
         ctx.fillStyle = HUECOL.violet; ctx.beginPath(); ctx.arc(dcx, dbase - r.w / 2 - 6, 3.4, 0, Math.PI * 2); ctx.fill();
         ctx.save(); ctx.globalAlpha = 0.13; ctx.fillStyle = '#8F7BD8';
         ctx.beginPath(); ctx.ellipse(dcx + Math.sin(t / 800 + r.x) * 3, SHORE + 34, r.w / 2, 26, 0, 0, Math.PI); ctx.fill(); ctx.restore();
@@ -418,10 +416,8 @@
       ctx.restore();
     });
 
-    // windows — kindle once a tower is complete; the inhabited city flickers
-    var inhabitedness = info.act.id === 'inhabited' ? 1
-      : info.act.id === 'rising' ? Math.max(0, info.frac - 0.45) * 1.6
-      : info.act.id === 'dissolution' ? Math.max(0, 1 - info.frac * 1.6) : 0;
+    // windows — kindle as the build passes halfway; finished towers only
+    var inhabitedness = Math.max(0, Math.min(1, (build - 0.52) / 0.48));
     if (inhabitedness > 0.02) {
       city.plots.forEach(function (p, pi) {
         var built = 0;
@@ -440,6 +436,16 @@
       });
     }
 
+    // --- fireflies: density follows richness ---
+    var nFlies = Math.round(flies.length * rich);
+    for (var fi = 0; fi < nFlies; fi++) {
+      var f = flies[fi];
+      var fx = f.bx + Math.sin(t / 7000 * f.sp + f.ph) * 36;
+      var fy = f.by + Math.sin(t / 5300 * f.sp + f.ph * 1.7) * 22;
+      ctx.save(); ctx.globalAlpha = (0.2 + 0.55 * (0.5 + 0.5 * Math.sin(t / 900 * f.sp + f.ph))) * Math.min(1, rich + 0.3);
+      ctx.drawImage(SPR[f.hue], fx - f.sz, fy - f.sz, f.sz * 2, f.sz * 2); ctx.restore();
+    }
+
     // --- delivery streaks ---
     state.streaks = state.streaks.filter(function (s) { return t - s.t0 < s.dur; });
     state.streaks.forEach(function (s) {
@@ -455,22 +461,17 @@
     ctx.fillStyle = '#05040F'; ctx.fillRect(0, SHORE - 3, W, 5);
     ctx.fillStyle = 'rgba(160,180,255,.14)'; ctx.fillRect(0, SHORE - 3, W, 1.4);
 
-    poemScheduler(info);
-    updateCaption(info);
-    state.actId = info.act.id;
+    poemScheduler();
+    updateCaption(e);
   }
 
   var captionEl = document.getElementById('captionline'), lastCaption = '';
-  function updateCaption(info) {
-    var txt;
-    if (info.day && !info.locked) {
-      txt = 'Act I · The Shore — by day the shore rests. The city returns at nightfall, 7 PM.';
-    } else {
-      var feed = state.flightsOk && state.flights !== null
-        ? state.flights + ' aircraft overhead are carrying in the parts'
-        : 'deliveries are unguided tonight — the sky feed is silent';
-      txt = 'Act ' + info.act.name + ' · ' + feed + ' · ' + POEMS.length + ' poems in tonight\u2019s bank';
-    }
+  function fmtE(e) { var m = Math.floor(e / 60), s = Math.floor(e % 60); return m + ':' + (s < 10 ? '0' : '') + s; }
+  function updateCaption(e) {
+    var feed = state.flightsOk && state.flights !== null
+      ? state.flights + ' aircraft overhead are carrying in the parts'
+      : 'deliveries are unguided — the sky feed is silent';
+    var txt = 'Movement ' + movementAt(e).name + ' · on screen ' + fmtE(e) + ' · ' + feed + ' · ' + POEMS.length + ' poems in the bank';
     if (txt !== lastCaption) { captionEl.textContent = txt; lastCaption = txt; }
   }
 
@@ -489,6 +490,7 @@
     poemEl.style.transition = 'opacity 1.2s ease-in-out';
     requestAnimationFrame(function () { poemEl.classList.add('on'); });
     poemBusyUntil = Infinity;
+    state.poemStarted = true;
   }
 
   // ---------- frame loop, ~30 fps ----------

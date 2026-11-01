@@ -2,62 +2,100 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>The HOUSE_NAME Edition — Briefing Template</title>
+<title>The HOUSE_NAME Edition — Briefing Template v4</title>
 <!--
-  BRIEFING TEMPLATE — "THE MORNING PAPER". A broadsheet front page for the
-  house: masthead, serif lede headline, ruled columns, alerts contained in
-  a boxed notice, the house as a box score. A fresh edition is composed
-  twice a day (calendar + weather + a smart-home snapshot) and baked into
-  a static page — see docs/OPERATIONS.md for the edition routine.
-  Palettes: the AM "Morning Edition" uses paper #FAF8F7 / ink #161E34;
-  the PM "Evening Edition" (shown here) inverts to ground #131A2E, ink
-  #E8E4D8, accent Dawn #FEDCC3. Headline serif ~54px, section heads 19px
-  caps, body 22px, mono for times/numbers.
-  ALL COPY BELOW IS PLACEHOLDER — replace it with your own edition.
+  BRIEFING TEMPLATE v4 — "THE MORNING PAPER". A broadsheet front page for
+  the house: masthead, serif lede headline, ruled columns. A fresh edition
+  is composed twice a day (calendar + weather + a smart-home snapshot) and
+  baked into a static page — see docs/OPERATIONS.md Spec A for the edition
+  routine, and docs/ALMANAC.md for the delight layer's bank.
+
+  WHAT CHANGED IN v4 (the two lessons): (1) v3 told the house's story
+  TWICE — the Needs Your Attention box and The House box score repeated
+  the same device data. In v4, house/device data appears EXACTLY ONCE, in
+  the compact mono strip under the columns; the attention box is for
+  PERSONAL items only (decisions, callbacks) and never carries a device
+  state. (2) A paper with no delight in it is a chore to read, so v4 adds
+  THE ALMANAC band: one or two short, verified items rotating daily —
+  an on-this-day in art or science, a native plant or creature of the
+  area in its season, a scrap of local history. Every almanac fact is
+  checked against a named source before it ships; an edition that can't
+  verify an item ships with fewer items, never with an invented one.
+
+  STRUCTURE (v4): masthead + date + edition № · serif lede (at most ONE
+  house clause) · columns: Today / Weather / Needs Your Attention
+  (personal only) · THE HOUSE strip (single home for device data:
+  lights on · notable offline by name · safety · the one maintenance
+  aggregate, labelled with its snapshot time) · THE ALMANAC band ·
+  SINCE THE LAST EDITION strip (the top items from the house feed —
+  see docs/OPERATIONS.md Spec D; house-type items are skipped, the
+  House strip owns them) · footer "Tomorrow —" line.
+
+  Palettes: the PM "Evening Edition" (shown here) uses ground #131A2E,
+  ink #E8E4D8, accent Dawn #FEDCC3, secondary #9FBBC3; the AM "Morning
+  Edition" swaps to paper #FAF8F7, ink #161E34, accent #9A5A24.
+  Headline serif 40px, section heads 17px caps mono, body ~20px, mono
+  for times/numbers.
+  ALL COPY BELOW IS SAMPLE — replace it with your own edition.
 -->
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #131A2E; }
   body { font-family: Georgia, "Times New Roman", serif; color: #E8E4D8; }
   .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  #stage { position: fixed; left: 50%; top: 50%; width: 1280px; height: 800px; transform-origin: center center; padding: 24px 44px 16px; }
+  #stage { position: fixed; left: 50%; top: 50%; width: 1280px; height: 800px; transform-origin: center center; padding: 18px 44px 14px; }
 
-  .masthead { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 10px; }
-  .paper { font-size: 30px; letter-spacing: .34em; font-weight: 700; text-transform: uppercase; }
-  .paper small { display: block; font-size: 14.5px; letter-spacing: .22em; color: #9FBBC3; margin-top: 5px; font-weight: 400; }
-  #clock { font-size: 40px; line-height: 1; }
-  .clocksub { font-size: 14.5px; color: #9FBBC3; text-align: right; margin-top: 4px; letter-spacing: .12em; text-transform: uppercase; }
-  .doublerule { border-top: 3px solid #E8E4D8; border-bottom: 1px solid #E8E4D8; height: 5px; margin-bottom: 20px; }
+  .masthead { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 6px; }
+  .paper { font-size: 29px; letter-spacing: .34em; font-weight: 700; text-transform: uppercase; }
+  .paper small { display: block; font-size: 14px; letter-spacing: .22em; color: #9FBBC3; margin-top: 4px; font-weight: 400; }
+  #clock { font-size: 38px; line-height: 1; }
+  .clocksub { font-size: 14px; color: #9FBBC3; text-align: right; margin-top: 3px; letter-spacing: .12em; text-transform: uppercase; }
+  .doublerule { border-top: 3px solid #E8E4D8; border-bottom: 1px solid #E8E4D8; height: 5px; margin-bottom: 12px; }
 
-  h1 { font-size: 51px; line-height: 1.13; font-weight: 700; max-width: 800px; }
+  h1 { font-size: 40px; line-height: 1.12; font-weight: 700; max-width: 1080px; }
   h1 .hl { background: rgba(254, 220, 195, .92); color: #161E34; padding: 0 8px; }
-  .byline { font-size: 16.5px; color: #9FBBC3; font-style: italic; margin-top: 9px; }
+  .byline { font-size: 16px; color: #9FBBC3; font-style: italic; margin-top: 6px; }
 
-  .cols { display: flex; gap: 34px; margin-top: 17px; }
+  .cols { display: flex; gap: 30px; margin-top: 11px; }
   .col { flex: 1; }
-  .col.wide { flex: 1.12; }
-  .col + .col { border-left: 1px solid rgba(232,228,216,.28); padding-left: 34px; }
-  h2 { font-size: 18px; letter-spacing: .26em; text-transform: uppercase; border-bottom: 1px solid rgba(232,228,216,.45);
-       padding-bottom: 6px; margin-bottom: 11px; font-family: ui-monospace, Menlo, monospace; font-weight: 700; }
-  .item { font-size: 20.5px; line-height: 1.3; margin-bottom: 11px; }
-  .item .t { font-family: ui-monospace, Menlo, monospace; font-size: 19px; color: #FEDCC3; }
-  .item .done { color: #9FBBC3; }
-  .item .note { display: block; font-size: 18px; color: #B9C4C9; font-style: italic; margin-top: 2px; }
-  .wrow { display: flex; justify-content: space-between; align-items: baseline; font-size: 20.5px; padding: 5px 0; border-bottom: 1px dotted rgba(232,228,216,.25); }
-  .wrow .v { font-family: ui-monospace, Menlo, monospace; font-size: 20px; }
+  .col.wide { flex: 1.05; }
+  .col.right { flex: 1.18; }
+  .col + .col { border-left: 1px solid rgba(232,228,216,.28); padding-left: 30px; }
+  h2 { font-size: 17px; letter-spacing: .24em; text-transform: uppercase; border-bottom: 1px solid rgba(232,228,216,.45);
+       padding-bottom: 6px; margin-bottom: 10px; font-family: ui-monospace, Menlo, monospace; font-weight: 700; }
+  .item { font-size: 19.5px; line-height: 1.28; margin-bottom: 10px; }
+  .item .t { font-family: ui-monospace, Menlo, monospace; font-size: 18px; color: #FEDCC3; }
+  .item .note { display: block; font-size: 17px; color: #B9C4C9; font-style: italic; margin-top: 2px; }
+  .wrow { display: flex; justify-content: space-between; align-items: baseline; font-size: 19.5px; padding: 5px 0; border-bottom: 1px dotted rgba(232,228,216,.25); }
+  .wrow .v { font-family: ui-monospace, Menlo, monospace; font-size: 19px; }
   .wrow:last-child { border-bottom: none; }
 
-  .notice { border: 2px solid #FEDCC3; padding: 13px 18px 7px; margin-bottom: 16px; }
-  .notice h2 { border-bottom-color: rgba(254,220,195,.5); color: #FEDCC3; }
-  .notice .item { font-size: 19.5px; margin-bottom: 9px; }
-  .boxscore { border: 1px solid rgba(232,228,216,.45); padding: 13px 18px 9px; }
-  .bsrow { display: flex; justify-content: space-between; font-family: ui-monospace, Menlo, monospace; font-size: 20px; padding: 5px 0; }
-  .bsrow .k { letter-spacing: .1em; color: #B9C4C9; font-size: 16.5px; padding-top: 3px; }
+  .notice { border: 2px solid #FEDCC3; padding: 10px 16px 4px; }
+  .notice h2 { border-bottom-color: rgba(254,220,195,.5); color: #FEDCC3; margin-bottom: 8px; }
+  .notice .item { font-size: 17px; line-height: 1.25; margin-bottom: 7px; }
 
-  .footrule { border-top: 1px solid #E8E4D8; margin-top: 15px; padding-top: 12px; display: flex; justify-content: space-between; align-items: baseline; }
-  .tomorrow { font-size: 21px; }
-  .tomorrow b { font-family: ui-monospace, Menlo, monospace; font-size: 16.5px; letter-spacing: .2em; color: #FEDCC3; margin-right: 10px; }
-  #vp { font-size: 13px; color: rgba(159,187,195,.6); font-family: ui-monospace, Menlo, monospace; }
+  .houseline { margin-top: 10px; border: 1px solid rgba(232,228,216,.45); padding: 7px 16px; display: flex; gap: 18px; align-items: baseline; }
+  .houseline .hk { font-family: ui-monospace, Menlo, monospace; font-size: 14px; letter-spacing: .16em; color: #9FBBC3; text-transform: uppercase; white-space: nowrap; }
+  .houseline .hv { font-family: ui-monospace, Menlo, monospace; font-size: 14.5px; white-space: nowrap; }
+
+  .almanac { margin-top: 11px; border-top: 3px solid #E8E4D8; padding-top: 8px; }
+  .almanac > h2 { border-bottom: none; margin-bottom: 7px; color: #FEDCC3; }
+  .alm { display: flex; gap: 30px; }
+  .alm .aitem { flex: 1; }
+  .alm .kick { font-family: ui-monospace, Menlo, monospace; font-size: 13px; letter-spacing: .22em; color: #9FBBC3; text-transform: uppercase; margin-bottom: 3px; }
+  .alm .ahead { font-size: 20px; font-weight: 700; margin-bottom: 3px; }
+  .alm .atext { font-size: 17px; line-height: 1.28; color: #D9D4C7; }
+
+  .since { margin-top: 10px; border: 1px solid rgba(232,228,216,.45); padding: 8px 16px 6px; display: flex; gap: 24px; align-items: baseline; }
+  .since .sk { font-family: ui-monospace, Menlo, monospace; font-size: 14px; letter-spacing: .16em; color: #FEDCC3; text-transform: uppercase; white-space: nowrap; }
+  .since .sitems { font-size: 15.5px; line-height: 1.35; }
+  .since .sitems span + span::before { content: " · "; color: #9FBBC3; }
+  .since .sgen { font-size: 12.5px; color: rgba(159,187,195,.75); font-style: italic; white-space: nowrap; }
+
+  .footrule { border-top: 1px solid #E8E4D8; margin-top: 9px; padding-top: 9px; display: flex; justify-content: space-between; align-items: baseline; }
+  .tomorrow { font-size: 19px; }
+  .tomorrow b { font-family: ui-monospace, Menlo, monospace; font-size: 15.5px; letter-spacing: .2em; color: #FEDCC3; margin-right: 10px; }
+  #vp { font-size: 12.5px; color: rgba(159,187,195,.6); font-family: ui-monospace, Menlo, monospace; }
 </style>
 </head>
 <body>
@@ -66,49 +104,69 @@
     <div class="paper">The HOUSE_NAME Edition<small>Evening Edition · YOUR_TOWN</small></div>
     <div>
       <div id="clock" class="mono">--:--</div>
-      <div class="clocksub">Day · Date · № 1</div>
+      <div class="clocksub">Sun · Nov 1 · № 2</div>
     </div>
   </div>
   <div class="doublerule"></div>
 
-  <h1>Your headline goes here — <span class="hl">the key phrase highlighted</span> like this.</h1>
-  <div class="byline">The byline: one sentence of colour under the headline — the day's weather, mood, or warning in plain words.</div>
+  <h1>The clocks fell back, and the season's first <span class="hl">early-dark evening</span> settles over the valley.</h1>
+  <div class="byline">A quiet Sunday closes. Bins go out tonight; tomorrow is a work day from half past eight.</div>
 
   <div class="cols">
     <div class="col wide">
       <h2>Today, in brief</h2>
-      <div class="item"><span class="t">9:00 AM</span> · A sample calendar item <span class="done">— done ✓</span></div>
-      <div class="item"><span class="t">EVENING</span> · A sample evening item<span class="note">A note in italics rides under its item.</span></div>
-      <div class="item"><span class="t">11:00 PM</span> · Quiet hours begin<span class="note">Displays rest; the briefing returns at seven.</span></div>
+      <div class="item"><span class="t">ALL DAY</span> · Daylight saving time ends<span class="note">Clocks went back one hour at 2 AM.</span></div>
+      <div class="item"><span class="t">ALL DAY</span> · Weekly Chore Check-in</div>
+      <div class="item"><span class="t">TONIGHT</span> · Bins out for the morning<span class="note">Trash is collected Monday morning.</span></div>
     </div>
 
     <div class="col">
       <h2>Weather</h2>
-      <div class="wrow"><span>Now</span><span class="v">--° · sample</span></div>
-      <div class="wrow"><span>Sunset</span><span class="v">--:-- PM</span></div>
-      <div class="wrow"><span>Tonight</span><span class="v">low --°</span></div>
-      <div class="wrow"><span>Rain chance</span><span class="v">--%</span></div>
-      <div class="wrow"><span>Tomorrow</span><span class="v">--° · sample</span></div>
+      <div class="wrow"><span>High today</span><span class="v">64° · clear spells</span></div>
+      <div class="wrow"><span>Sunset</span><span class="v">5:08 PM</span></div>
+      <div class="wrow"><span>Tonight</span><span class="v">47° · dry</span></div>
+      <div class="wrow"><span>Tomorrow</span><span class="v">70° · dry</span></div>
     </div>
 
-    <div class="col">
+    <div class="col right">
       <div class="notice">
         <h2>Needs your attention</h2>
-        <div class="item">Sample notice: the robot vacuum is offline.</div>
-        <div class="item">Sample notice: N lights awaiting attention.</div>
-        <div class="item">Sample notice: a battery is low.</div>
-      </div>
-      <div class="boxscore">
-        <h2>The House — box score</h2>
-        <div class="bsrow"><span class="k">LIGHTS ON</span><span>1</span></div>
-        <div class="bsrow"><span class="k">BATTERIES LOW</span><span>2</span></div>
-        <div class="bsrow"><span class="k">DEVICES OFFLINE</span><span>5</span></div>
+        <div class="item">A callback is still owed — the vet's office; the outcome of last week's visit is unconfirmed.</div>
+        <div class="item">A subscription may be duplicated — your call before it renews on the 7th.</div>
+        <div class="item">The gallery watcher passed all 19 of its replay tests — it arms only when you say so.</div>
       </div>
     </div>
   </div>
 
+  <div class="houseline">
+    <div class="hk">The House — 9:53 AM</div>
+    <div class="hv">2 lights on · the vacuum offline · bedroom display down · smoke + CO clear · 12 lights awaiting refresh</div>
+  </div>
+
+  <div class="almanac">
+    <h2>The Almanac</h2>
+    <div class="alm">
+      <div class="aitem">
+        <div class="kick">On this day · Science</div>
+        <div class="ahead">Alfred Wegener, born Nov 1, 1880</div>
+        <div class="atext">The German meteorologist who proposed continental drift was born on this day in Berlin. His 1912 idea — the continents were once one landmass, Pangaea, and drifted apart — was rejected in his lifetime and vindicated in the 1960s as the foundation of plate tectonics.</div>
+      </div>
+      <div class="aitem">
+        <div class="kick">The Valley · November</div>
+        <div class="ahead">The newts are on the move</div>
+        <div class="atext">With the first rains, California newts walk overland to their breeding ponds and slow streams; the season opens now and runs to March. Their skin carries a potent poison, so the rule is look, never touch — after rain, watch for them on shaded trails near Coyote Creek.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="since">
+    <div class="sk">Since the last edition</div>
+    <div class="sitems"><span>The clocks fell back this morning — sunset tonight is 5:08 PM</span><span>Next ISS pass worth stepping out for: tomorrow, Mon Nov 2, about 6:04 AM</span><span>A project counter you track, stated the way you count it</span></div>
+    <div class="sgen">from the morning feed</div>
+  </div>
+
   <div class="footrule">
-    <div class="tomorrow"><b>TOMORROW —</b>One line about tomorrow: the first appointment, a clock change, the sunrise.</div>
+    <div class="tomorrow"><b>TOMORROW —</b>Monday: work meetings from 8:30 AM (untitled busy blocks) · 70° and dry · sunrise 6:32, sunset 5:07.</div>
     <div id="vp">viewport: measuring…</div>
   </div>
 </div>

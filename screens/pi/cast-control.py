@@ -9,14 +9,169 @@ No authentication by design decision: it binds the home LAN / tailnet only,
 same trust level as the briefing page server it sits beside.
 Also listens on port 80 with a bare redirect to :8081, so the bookmarked
 http://CASTPI_LAN_IP/ address lands on this controller (see RedirectHandler).
+Also the companion for Govee TV light bars: after a successful TV cast
+the bars behind the TV take the view's recipe via the sibling govee.py
+module (Govee's LAN API, scan-based discovery — no address hardcoded),
+a TV stop or the movie-mode flag turns them off, and the TV card
+carries a Bars row (Off / Auto / Warm / Dim) backed by POST /bars and
+the /status "bars" object. Bars failures never affect casting.
 """
-import json, os, subprocess, threading, time, urllib.request
+import json, os, re, subprocess, threading, time, urllib.request
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOME = os.path.expanduser("~")
 CATT = os.path.join(HOME, "caster", "bin", "catt")
 BASE = "http://CASTPI_LAN_IP:8080"  # CONFIG: your caster Pi's LAN address
 LOG_F = os.path.join(HOME, "cast-control.log")
+# Refresh-on-cast: the dashboard and floorplan bake their Home Assistant
+# states at render time (see docs/OPERATIONS.md, the snapshot job), so a
+# cast can bring up hours-old data. When a cast is requested for one of
+# those views and its baked snapshot is > 20 min old, the controller drops
+# ~/refresh-request.flag; a watcher on the machine that runs the snapshot
+# job spots it and refreshes in the background. The cast itself NEVER
+# waits on this — it proceeds immediately with the data that exists. The
+# flag is a request, not data (no credentials ever live on the Pi).
+# Idempotent: an existing flag < 10 min old is left alone.
+REFRESH_FLAG_F = os.path.join(HOME, "refresh-request.flag")
+BRIEFING_DIR = os.path.join(HOME, "briefing")
+SNAPSHOT_VIEWS = {"dashboard": "dashboard.html", "floorplan": "floorplan.html"}
+SNAPSHOT_STALE_S = 20 * 60
+REFRESH_FLAG_MIN_AGE_S = 10 * 60
+
+# Govee TV light-bars companion: the Govee light bars behind the TV
+# follow TV casts over Govee's LAN API via the sibling govee.py module.
+# The import is defensive: if the module is missing or the bars are
+# asleep, casting proceeds exactly as before — the lights are a
+# companion, never a dependency, and no bars call may block or break a
+# cast. Recipes are static per view; the client hard-caps recipe
+# brightness at 30% and anything from this controller at 60%. A
+# movie-mode flag file (shared with the gallery watcher) means bars
+# OFF, always. Bedroom/kitchen casts never touch the bars.
+try:
+    import govee as _govee
+except Exception:
+    _govee = None
+
+MOVIE_FLAG_F = os.path.join(HOME, "movie-mode.flag")
+WATCH_STATE_F = os.path.join(HOME, "gallery-watch-state.json")
+
+# view -> (brightness %, ("kelvin", K) | ("rgb", (r, g, b))); the briefing
+# brightness is time-of-day (25% before noon, 20% after) and the Feed
+# follows the Dashboard recipe.
+BAR_RECIPES = {
+    "briefing":      (None, ("kelvin", 2700)),
+    "dashboard":     (20, ("kelvin", 3000)),
+    "feed":          (20, ("kelvin", 3000)),
+    "tonights-sky":  (12, ("rgb", (45, 35, 130))),
+    "storm-mode":    (15, ("rgb", (70, 85, 105))),
+    "jelly-cam":     (18, ("rgb", (0, 128, 128))),
+    "gallery-all":   (25, ("kelvin", 3750)),
+    "gallery-local": (25, ("kelvin", 3750)),
+    "gallery-art":   (25, ("kelvin", 3750)),
+    "dream-mode":    (10, ("rgb", (88, 40, 160))),
+    "mycelium":      (12, ("rgb", (120, 30, 200))),
+}
+bars = {"auto": True, "mode": "auto", "recipe": None, "reachable": None,
+        "status": None, "updated": None}
+_bars_lock = threading.Lock()
+
+def _bars_note(mode, recipe, reachable, status):
+    with _bars_lock:
+        bars.update({"mode": mode, "recipe": recipe, "reachable": reachable,
+                     "status": status, "updated": time.strftime("%H:%M")})
+
+def _bars_off(reason):
+    """Bars off + record it. Never raises."""
+    try:
+        if _govee is None:
+            _bars_note("off", None, None, None)
+            return
+        ok, st = _govee.off()
+        _bars_note("off", None, ok, st)
+        log(f"BARS off ({reason}) ok={ok}")
+    except Exception as e:
+        log(f"BARS off failed ({reason}): {e}")
+
+def bars_apply_recipe(view_key):
+    """Companion step after a successful TV cast: put the bars into the
+    view's recipe. Honours, in order: movie mode (bars off), the Auto
+    gate (a manual Bars choice wins until Auto is re-selected), and the
+    recipe table (a view with no recipe turns the bars off). Never
+    raises — it runs inside the cast thread, after the cast itself."""
+    try:
+        if _govee is None:
+            return
+        if os.path.exists(MOVIE_FLAG_F):
+            _bars_off("movie mode")
+            return
+        with _bars_lock:
+            auto = bars["auto"]
+        if not auto:
+            return
+        spec = BAR_RECIPES.get(view_key)
+        if spec is None:
+            _bars_off(f"no recipe for {view_key}")
+            return
+        bright, color = spec
+        if view_key == "briefing":
+            bright = 25 if datetime.now().hour < 12 else 20
+        kw = {"brightness": bright}
+        kw[color[0]] = color[1]
+        ok, st = _govee.set_recipe(**kw)
+        _bars_note("auto", f"{view_key} recipe", ok, st)
+        log(f"BARS recipe {view_key} {kw} ok={ok}")
+    except Exception as e:
+        log(f"BARS recipe failed for {view_key}: {e}")
+
+def bars_snapshot():
+    with _bars_lock:
+        return dict(bars)
+
+def bars_manual(mode):
+    """The controller's Bars row: off | auto | warm | dim. Manual modes
+    switch Auto off (the human beats the automation until Auto is
+    re-selected); warm/dim go through the client's MANUAL_CAP (60).
+    Returns a human result string. Never raises."""
+    try:
+        if mode == "off":
+            with _bars_lock:
+                bars["auto"] = False
+            _bars_off("controller")
+            return "bars off"
+        if mode == "auto":
+            with _bars_lock:
+                bars["auto"] = True
+            _bars_note("auto", bars_snapshot()["recipe"],
+                       bars_snapshot()["reachable"], bars_snapshot()["status"])
+            cur = state["devices"].get("tv") or {}
+            vk = cur.get("view")
+            if vk and vk != "stop":
+                bars_apply_recipe(vk)
+            return "bars auto — following casts"
+        if mode in ("warm", "dim"):
+            with _bars_lock:
+                bars["auto"] = False
+            if _govee is None:
+                return "bars unavailable (no client)"
+            if os.path.exists(MOVIE_FLAG_F):
+                _bars_off("movie mode")
+                return "movie mode is on — bars stay off"
+            if mode == "warm":
+                ok, st = _govee.set_recipe(brightness=25, kelvin=2700,
+                                           cap=_govee.MANUAL_CAP)
+                name = "warm 2700K · 25%"
+            else:
+                ok, st = _govee.set_recipe(brightness=5, kelvin=2200,
+                                           cap=_govee.MANUAL_CAP)
+                name = "dim 2200K · 5%"
+            _bars_note(mode, name, ok, st)
+            log(f"BARS manual {name} ok={ok}")
+            return f"bars: {name}" + ("" if ok else " (the bars didn't answer)")
+        return "unknown bars mode"
+    except Exception as e:
+        log(f"BARS manual {mode} failed: {e}")
+        return f"bars error: {e}"
 
 DEVICES = {
     "bedroom": "Bedroom display",
@@ -33,7 +188,6 @@ VIEWS = {
     "jelly-cam": ("Jelly Cam — Monterey Bay", BASE + "/jelly-cam.html"),
     "tonights-sky": ("Tonight's Sky", BASE + "/tonights-sky.html"),
     "storm-mode": ("Storm Mode", BASE + "/storm-mode.html"),
-    "aqi-sentinel": ("AQI Sentinel", BASE + "/aqi-sentinel.html"),
     "flights-overhead": ("Flights Overhead", BASE + "/flights-overhead.html"),
     "mycelium": ("Living Mycelium", BASE + "/mycelium.html"),
     "dream-mode": ("Dream Mode — The Day, Dreamed", BASE + "/dream-mode.html"),
@@ -62,6 +216,76 @@ def log(msg):
     with open(LOG_F, "a") as f:
         f.write(line + "\n")
 
+def snapshot_age_s(view_key):
+    """Age in seconds of the baked HA snapshot in a snapshot page, parsed
+    from its "states read …" footer line; falls back to the file's mtime.
+    Returns None if the page can't be read at all."""
+    path = os.path.join(BRIEFING_DIR, SNAPSHOT_VIEWS[view_key])
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except Exception:
+        text = None
+    if text:
+        idx = text.lower().rfind("states read")
+        seg = text[idx:idx + 300] if idx >= 0 else text
+        m = re.search(r"([A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2} [AP]M)", seg)
+        if m:
+            try:
+                dt = datetime.strptime(m.group(1), "%b %d, %Y, %I:%M %p")
+                return time.time() - time.mktime(dt.timetuple())
+            except Exception:
+                pass
+    try:
+        return time.time() - os.path.getmtime(path)
+    except Exception:
+        return None
+
+def maybe_request_refresh(view_key):
+    """Write ~/refresh-request.flag when view_key is a snapshot page whose
+    baked data is stale (> 20 min). Returns True only when this call wrote
+    the flag. Never raises — a refresh problem must never break a cast."""
+    try:
+        if view_key not in SNAPSHOT_VIEWS:
+            return False
+        age = snapshot_age_s(view_key)
+        if age is None or age <= SNAPSHOT_STALE_S:
+            return False
+        try:
+            if time.time() - os.path.getmtime(REFRESH_FLAG_F) < REFRESH_FLAG_MIN_AGE_S:
+                return False  # a fresh request is already pending
+        except OSError:
+            pass
+        payload = {"page": view_key,
+                   "requested_at": datetime.now().isoformat(timespec="seconds"),
+                   "reason": "cast"}
+        tmp = REFRESH_FLAG_F + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, REFRESH_FLAG_F)
+        log(f"REFRESH REQUESTED {view_key} (snapshot age {int(age // 60)} min > 20 min)")
+        return True
+    except Exception as e:
+        log(f"REFRESH CHECK FAILED {view_key}: {e}")
+        return False
+
+def status_extras():
+    """Additive /status fields (existing keys untouched): movie-mode flag
+    state, the gallery watcher's liveness + current gate string from its
+    state file, and the TV light bars' last-known companion state. The
+    watcher polls every ~30 s; a state file older than 120 s means it is
+    not running (e.g. its timer is disabled)."""
+    w = {"polling": False, "gate": None}
+    try:
+        age = time.time() - os.path.getmtime(WATCH_STATE_F)
+        if age < 120:
+            with open(WATCH_STATE_F) as f:
+                w = {"polling": True, "gate": json.load(f).get("gate")}
+    except Exception:
+        pass
+    return {"movie_mode": os.path.exists(MOVIE_FLAG_F), "watcher": w,
+            "bars": bars_snapshot()}
+
 def run_cast(device_key, view_key):
     state["busy"] = True
     try:
@@ -73,6 +297,8 @@ def run_cast(device_key, view_key):
             log(f"STOP {dev}")
             state["devices"][device_key] = {"view": "stop", "label": "Stopped",
                                             "when": time.strftime("%H:%M")}
+            if device_key == "tv":
+                _bars_off("tv stop")
             return
         label, url = VIEWS[view_key]
         subprocess.run([CATT, "-d", dev, "stop"], timeout=60,
@@ -86,6 +312,8 @@ def run_cast(device_key, view_key):
                                         "when": time.strftime("%H:%M"),
                                         "unconfirmed": not ok}
         log(f"CAST {dev} <- {label} {url} ok={ok} out={(r.stdout + r.stderr).strip()[:200]}")
+        if device_key == "tv" and ok:
+            bars_apply_recipe(view_key)
     except Exception as e:
         state["last"] = f"error: {e}"
         log(f"ERROR {device_key}/{view_key}: {e}")
@@ -181,6 +409,13 @@ PAGE = """<!doctype html>
   .vbtn.pending { border-color: var(--accent); color: var(--accent); }
   button:disabled { opacity: .5; cursor: default; }
   .vbtn.pending:disabled, .stopbtn:disabled { opacity: 1; }
+  .tvbars { margin-top: 14px; display: flex; flex-direction: column; gap: 7px; }
+  .barsline { font-size: 13.5px; color: var(--ink-soft); line-height: 1.35; }
+  .barsrow { display: flex; gap: 7px; }
+  .barsbtn { flex: 1; min-height: 46px; border-radius: 12px; padding: 8px 6px;
+    border: 1px solid var(--btn-line); background: var(--btn);
+    color: var(--ink); font-size: 14.5px; font-weight: 680; cursor: pointer; }
+  .barsbtn.on { background: var(--accent); border-color: var(--accent); color: #FFF6EC; }
   .foot { margin-top: 18px; font-size: 13px; color: var(--ink-soft); text-align: center; }
   .spin { display: inline-block; animation: pulse 1s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
@@ -203,7 +438,6 @@ PAGE = """<!doctype html>
     ["Skies & Weather", [
       ["tonights-sky", "🔭", "Tonight's Sky", "Tonight's Sky"],
       ["storm-mode", "⛈️", "Storm Mode", "Storm Mode"],
-      ["aqi-sentinel", "🌫️", "AQI", "AQI Sentinel"],
       ["flights-overhead", "✈️", "Flights", "Flights Overhead"]]],
     ["Living Things", [
       ["jelly-cam", "🪼", "Jelly Cam", "Jelly Cam — Monterey Bay"],
@@ -220,10 +454,12 @@ PAGE = """<!doctype html>
   let op = null;            // {dk, vk} while a cast WE started is in flight
   let serverBusy = false;   // server reports a cast running (ours or keep-alive's)
   let lastSeen = "";
+  let refreshReq = false;   // /cast said this cast's page data was stale and a background refresh was requested
   let toastTimer = null;
 
   const wrap = document.getElementById('devices');
   const nowEls = {}, btnEls = {}, stopEls = {};
+  const tvBars = {};
   for (const [dk, emo, dl] of DEVICES) {
     const d = document.createElement('div'); d.className = 'dev';
     const head = document.createElement('div'); head.className = 'devhead';
@@ -235,6 +471,20 @@ PAGE = """<!doctype html>
     stop.onclick = () => send(dk, 'stop');
     head.appendChild(left); head.appendChild(stop); d.appendChild(head);
     stopEls[dk] = stop; btnEls[dk] = {};
+    if (dk === 'tv') {
+      const mb = document.createElement('div'); mb.className = 'tvbars';
+      const bl = document.createElement('div'); bl.className = 'barsline';
+      bl.textContent = '💡 TV light bars: …';
+      const brow = document.createElement('div'); brow.className = 'barsrow';
+      const bbtns = {};
+      for (const [mode, lab] of [['off', 'Bars Off'], ['auto', 'Auto'], ['warm', 'Warm'], ['dim', 'Dim']]) {
+        const bb = document.createElement('button'); bb.className = 'barsbtn'; bb.textContent = lab;
+        bb.onclick = () => barsSend(mode);
+        brow.appendChild(bb); bbtns[mode] = bb;
+      }
+      mb.appendChild(bl); mb.appendChild(brow); d.appendChild(mb);
+      tvBars.line = bl; tvBars.btns = bbtns;
+    }
     for (const [gname, views] of GROUPS) {
       const g = document.createElement('div'); g.className = 'group';
       const gl = document.createElement('div'); gl.className = 'grouplabel'; gl.textContent = gname;
@@ -310,6 +560,17 @@ PAGE = """<!doctype html>
         btnEls[dk][vk].querySelector('.tag').hidden = !isCur;
       }
     }
+    if (tvBars.line && s.bars) {
+      const b = s.bars, st = b.status;
+      const live = st ? (st.onOff ? 'on · ' + st.brightness + '%' : 'off')
+                      : 'no reading yet';
+      tvBars.line.textContent = '💡 TV light bars: ' +
+        (b.mode === 'off' ? 'off' : (b.recipe || 'auto')) + ' · ' + live +
+        (b.reachable === false ? " · ⚠️ didn't answer" : '') +
+        (b.updated ? ' · set ' + b.updated : '');
+      for (const m of Object.keys(tvBars.btns))
+        tvBars.btns[m].classList.toggle('on', b.mode === m);
+    }
     markPending();
   }
 
@@ -319,6 +580,16 @@ PAGE = """<!doctype html>
       setBanner(false);
       render(s);
     } catch (e) { setBanner(true); }
+  }
+
+  async function barsSend(mode) {
+    try {
+      const r = await (await fetch('/bars', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mode: mode})})).json();
+      setToast('ok', '💡 ' + (r.result || 'bars updated'), true);
+    } catch (e) { setBanner(true); }
+    refresh();
   }
 
   async function send(dk, vk) {
@@ -340,11 +611,16 @@ PAGE = """<!doctype html>
       setToast('err', "✗ Couldn't reach the controller — nothing was cast. Check you're on home Wi-Fi and try again.", false);
       return;
     }
+    refreshReq = res.refresh === 'requested';
     if (res.result !== 'started') {
       op = null; markPending();
       setToast('err', '✗ ' + res.result, false);
       refresh();
       return;
+    }
+    if (refreshReq) {
+      setToast('pending', '<span class="spin">⏳</span> Casting ' + what + ' → ' + dl +
+        '… · its data was stale, so a refresh was requested in the background — the screen will update itself shortly.', false);
     }
     pollDone(dk, vk, dl, what);
   }
@@ -366,7 +642,8 @@ PAGE = """<!doctype html>
           else
             setToast('err', "✗ Stop didn't confirm — last action: " + (s.last || 'unknown'), false);
         } else if (dv && dv.view === vk && !dv.unconfirmed) {
-          setToast('ok', '✓ ' + what + ' is on the ' + dl + '.', true);
+          setToast('ok', '✓ ' + what + ' is on the ' + dl + '.' +
+            (refreshReq ? ' Data refresh requested — it will update itself in a few minutes.' : ''), true);
         } else if (dv && dv.view === vk && dv.unconfirmed) {
           setToast('err', "✗ The cast to the " + dl + " didn't confirm — the display may not have taken it. Try again, or check the screen.", false);
         } else if ((s.last || '').indexOf('error') === 0) {
@@ -407,7 +684,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body)
         elif self.path == "/status":
-            body = json.dumps(state).encode()
+            # Additive extras (movie_mode / watcher / bars); existing keys
+            # are untouched.
+            merged = dict(state); merged.update(status_extras())
+            body = json.dumps(merged).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body)
@@ -417,13 +697,33 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body)
     def do_POST(self):
+        if self.path == "/bars":
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                req = json.loads(self.rfile.read(n) or b"{}")
+                msg = bars_manual(req.get("mode", ""))
+            except Exception as e:
+                msg = f"bad request: {e}"
+            body = json.dumps({"result": msg}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path != "/cast":
             self.send_response(404); self.end_headers(); return
+        resp = {}
         try:
             n = int(self.headers.get("Content-Length", 0))
             req = json.loads(self.rfile.read(n) or b"{}")
             dk, vk = req.get("device"), req.get("view")
             if dk in DEVICES and (vk in VIEWS or vk == "stop"):
+                # Refresh-on-cast: runs BEFORE the cast thread starts, and
+                # regardless of whether the cast then succeeds — a stale
+                # snapshot page earns a background refresh request, and the
+                # cast proceeds immediately either way (see
+                # maybe_request_refresh). Additive response field only.
+                if maybe_request_refresh(vk):
+                    resp["refresh"] = "requested"
                 if state["busy"]:
                     msg = "busy — a cast is already running, try again in a few seconds"
                 else:
@@ -433,7 +733,8 @@ class Handler(BaseHTTPRequestHandler):
                 msg = "unknown device or view"
         except Exception as e:
             msg = f"bad request: {e}"
-        body = json.dumps({"result": msg}).encode()
+        resp["result"] = msg
+        body = json.dumps(resp).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body))); self.end_headers()
         self.wfile.write(body)

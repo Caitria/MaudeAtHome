@@ -16,7 +16,7 @@ FILE2VIEW = {
     "floorplan.html": "floorplan", "gallery-all.html": "gallery-all",
     "gallery.html": "gallery-bay", "gallery-art.html": "gallery-art",
     "jelly-cam.html": "jelly-cam", "tonights-sky.html": "tonights-sky",
-    "storm-mode.html": "storm-mode", "aqi-sentinel.html": "aqi-sentinel",
+    "storm-mode.html": "storm-mode",
     "flights-overhead.html": "flights-overhead",
 }
 

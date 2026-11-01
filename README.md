@@ -15,16 +15,21 @@ why the TV is never allowed to interrupt a movie.
 ### [`screens/`](screens/) — House Screens
 
 A house full of calm screens: a twice-daily broadsheet briefing (the
-Morning Paper) cast to the bedroom at 7 AM / 7 PM; a TV dashboard whose
-hero is a glowing two-floor plan of the house with a sun arc and one
-diamond per solar inverter; a live flight-radar scope the page draws
-itself from raw ADS-B data; storm theatre (animated radar, a particle
-wind field, a live satellite window, full-screen weather-alert posters);
-a night-sky page with real, locally computed ISS pass predictions; an
-organism that grows from the day's house signals; and an overnight dream
-in which a city of light builds itself while public-domain dream poems
-surface. A small Raspberry Pi serves the pages and casts them; a phone
-page is the remote. Start with [`screens/README.md`](screens/README.md);
+Morning Paper — house data stated once, personal items up front, and a
+rotating verified Almanac of local plants, local history, and
+on-this-days in art and science) cast to the bedroom at 7 AM / 7 PM; a
+TV dashboard whose hero is a glowing two-floor plan of the house with a
+sun arc and one diamond per solar inverter, alternating in place with a
+full-board feed of the household's context — and light bars behind the
+TV that take each cast's colours; a live flight-radar scope the page
+draws itself from raw ADS-B data; storm theatre (animated radar, a
+particle wind field, a live satellite window, full-screen weather-alert
+posters); a night-sky page with real, locally computed ISS pass
+predictions; an organism that grows from the day's house signals; and a
+dream in which a city of light builds itself — on time-on-screen, not
+time of day — while public-domain dream poems surface. A small
+Raspberry Pi serves the pages and casts them; a phone page is the
+remote. Start with [`screens/README.md`](screens/README.md);
 hardware is in [`screens/PARTS.md`](screens/PARTS.md) and day-to-day
 operations in [`screens/docs/OPERATIONS.md`](screens/docs/OPERATIONS.md).
 

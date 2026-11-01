@@ -38,15 +38,16 @@ Edit local → QA → deploy → verify (§7).
 | Page | What it is | Data sources |
 |---|---|---|
 | briefing (deployed as the server root) | **The Morning Paper** briefing (AM paper / PM Evening Edition) | Baked per edition (calendar + weather + house snapshot, frozen at compose time) — §4A |
-| `dashboard.html` | TV dashboard "The House, Lit + House Pulse" | Smart-home states **baked** by the snapshot job (§4C); sun arc from the client clock with per-date sunrise/sunset constants |
+| `dashboard.html` | TV dashboard "The House, Lit + House Pulse" — **two voices**: the page alternates in place between the House board (45 s) and a full-board "From your agent — the feed" phase (30 s, or 45 s across two item pages) rendered from `feed-household.json` | Smart-home states **baked** by the snapshot job (§4C); sun arc from the client clock with per-date sunrise/sunset constants; feed phase per Spec D. The page also watches its own file and reloads when the snapshot job republishes it, and a cast of a stale dashboard asks for a refresh (§4C) |
 | `floorplan.html` | Floorplan "Glow" | Same baked-states mechanism as the dashboard |
+| `feed-household.json` / `feed-bedroom.json` | The curated context feed (Spec D), tier-split at generation | Written by the off-Pi feed generator every ~30 min; the household file is the only one shared screens ever receive |
 | `tonights-sky.html` | Tonight's Sky | Weather API at load; Moon computed in-page; ISS live position from a public ISS API; **ISS passes from `iss.json`** (§3) |
 | `iss.json` | ISS pass predictions, 4 days | Generated on the Pi from CelesTrak TLE + SGP4 (`iss-passes.py`) |
 | `flights-overhead.html` | Flights Overhead (self-rendered radar) | ADS-B aggregator via the Pi's `:8081/adsb` proxy, polled 15 s |
-| `aqi-sentinel.html` | AQI Sentinel | Air-quality API — fetch at load |
+| `aqi-sentinel.html` | AQI Sentinel — **retired as a cast view** (the air got a line in the feed instead of a whole mode); the page file is kept for reference | Air-quality API — fetch at load |
 | `storm-mode.html` | Storm Mode (radar / wind / planet scenes + alert poster) | Radar tiles (5 min), gridded wind (hourly), satellite sector image (5 min), weather-service alerts (60 s) |
 | `mycelium.html` | Living Mycelium | Aircraft count + weather at load; organism skeleton seeded by date |
-| `dream-mode.html` | Dream Mode "The Pleasure-Dome" | Aircraft poll 60 s; acts/phases from the clock; public-domain poem bank baked into the page |
+| `dream-mode.html` | Dream Mode "The Pleasure-Dome" | Aircraft poll 60 s; the visual arc is driven by **time on screen** (elapsed since the page loaded — the first paint is already alive, and the dream deepens over ~12 minutes), never by the time of day; public-domain poem bank baked into the page |
 | `jelly-cam.html` | Jelly Cam (full-bleed) | A public livestream embed; facts card baked |
 | `gallery*.html` | TV art gallery (mixed / places / art) | Static local images in `img/` + `img-art/` (not shipped — supply your own); client-side rotation |
 
@@ -62,9 +63,10 @@ Edit local → QA → deploy → verify (§7).
 | Tonight's Sky weather | At page load (a recast reloads) | Hours-old cloud data on a very long cast — add an hourly in-page refetch if that matters to you | Page |
 | ISS passes `iss.json` | Nightly + at boot | TLE ages gracefully; the page refuses data > 36 h old and says so | Pi timer |
 | Flights | 15 s poll, 12 s proxy cache | None material | Page + proxy |
-| AQI / Mycelium signals | At load | Ages on long casts — same optional refetch fix | Page |
+| Mycelium signals | At load | Ages on long casts — same optional refetch fix | Page |
 | Storm Mode | Radar 5 min · alerts 60 s · satellite 5 min · wind hourly | None material | Page |
-| Dream Mode | Aircraft 60 s; everything else from the clock | None material | Page |
+| Dream Mode | Aircraft 60 s; the arc runs on elapsed time since load | None material | Page |
+| Context feed | Generator rebuilds both tier files every ~30 min; the dashboard re-reads the household file as its feed phase opens (5-min poll as backstop) | A feed phase never opens on stale items: missing/empty/> 90 min old → the phase is skipped and the screen stays on the House board | Feed generator (Spec D) |
 | Gallery images | Static | Only stale when the collection should change | Human curation |
 | Jelly Cam | Live stream | Dies only if the streamer restarts it under a new ID | Human check when it breaks |
 
@@ -80,7 +82,7 @@ Edit local → QA → deploy → verify (§7).
 | `cast-control.service` | Always | Phone control :8081 + `/adsb` proxy + port-80 redirect | `curl localhost:8081/` → 200 · `curl localhost:8081/adsb` → JSON | `~/cast-control.log` |
 | Briefing fetch timer | 06:50 + 18:50 daily | Downloads the edition file; swaps it in only if it contains "Briefing" | `systemctl list-timers` | `~/briefing-fetch.log` |
 | Briefing cast timer | 07:00 + 19:00 daily | Stop, sleep 10, cast the briefing to the bedroom display | `systemctl list-timers` | `~/cast-briefing.log` |
-| Gallery watch timer | Every 30 s | **The gallery idle rule:** TV on + Chromecast idle 3 min, 06:00–23:00 → cast the mixed gallery; recast every 8 min; yields to other content; stops on TV-off / quiet hours | `systemctl list-timers` · log tail shows recent polls | `~/gallery-watch.log` (+ state file). Known blind spot: the TV's own built-in apps are invisible to a Chromecast-state watcher |
+| Gallery watch timer | Every 30 s — **DISABLED as shipped** | **The gallery idle rule, v2 (positive idle):** the watcher may start the gallery only on positive proof the Chromecast itself is the TV's idle screen — TV on + the running app is exactly the Backdrop screensaver + player not playing, sustained 5 min, inside 06:00–23:00, movie mode off, and no manual TV cast/stop in the last 3 h. Anything else (app unknown, another input, an undiscovered device) is refused, with the reason written to the state file's `gate` string, which the phone controller surfaces. It maintains only a gallery it started (8-min recasts; stops on TV-off / quiet hours / movie mode). **In the original house the timer is disabled pending the owner's review of the v2 replay-harness evidence — v1 once cast over a movie playing outside the Chromecast, and v2 arms only by the owner's explicit say-so** | `systemctl list-timers` · log tail shows recent polls | `~/gallery-watch.log` (+ state file). Known blind spot: the TV's own built-in apps are invisible to a Chromecast-state watcher — that blind spot is exactly why v2 demands positive idle instead of treating silence as consent |
 | ISS passes timer | ~18:00 daily + after boot (Persistent) | CelesTrak TLE → SGP4 → writes `iss.json` (4 days, passes > 10°; visible = sunlit at peak AND sun < −4° at the observer). On failure it exits non-zero and leaves the old file — staleness is detectable, never silent | `systemctl list-timers` · read `generated_at` in `iss.json` | journal |
 
 ### On the caster Pi (user crontab)
@@ -95,6 +97,16 @@ Edit local → QA → deploy → verify (§7).
   separate host (an always-on machine, or wherever your automation/agent
   lives). Their credentials live **there** — never on the Pi, never in a
   script file on the Pi.
+- The **feed generator** (Spec D) also runs off-Pi, every ~30 min: it
+  gathers the live sources, curates, tier-splits, and deploys the two
+  feed JSON files to the Pi's served directory.
+- A **refresh-on-cast watcher** (off-Pi, ~2 min poll): when the phone
+  controller drops `~/refresh-request.flag` on the Pi (a dashboard or
+  floorplan cast whose baked snapshot was > 20 min old), the watcher
+  runs the §4C refresh once, under the same lock the snapshot job uses,
+  and clears the flag only after a verified deploy. The cast itself
+  never waits — the on-screen page reloads itself when the new file
+  lands (§4C).
 - The **health check** (§4B) also runs off-Pi, so a dead Pi can't hide.
 
 ---
@@ -112,11 +124,31 @@ the Pi fetches at :50 and casts at :00 — the buffer is the point).
 > address; never publish to a new file).
 > - **AM run** → the Morning Edition (light paper palette). **PM run** →
 >   the Evening Edition (dark palette). Format authority:
->   `pages/briefing-template.html` — masthead + full date + edition line
->   on a double rule; serif lede headline whose key phrase carries the
->   highlight; columns: Today / Weather / Needs Your Attention (boxed
->   notice) / The House (mono box score); footer "Tomorrow —" line.
-> - **Data recipe, all four, every edition:** (1) **Calendar** — the day's
+>   `pages/briefing-template.html` (v4) — masthead + full date + edition
+>   line on a double rule; serif lede headline whose key phrase carries
+>   the highlight (at most ONE house clause in the lede); columns:
+>   Today / Weather / **Needs Your Attention — PERSONAL items only**
+>   (decisions, callbacks, feed needs-you items; a device state never
+>   appears here); **The House as one compact mono strip** under the
+>   columns — the single place house/device data appears (lights on ·
+>   notable offline by name · safety · the one maintenance aggregate,
+>   labelled with its snapshot time); **The Almanac** band (below);
+>   a **Since the last edition** strip (the top ≤ 4 household-feed
+>   items, house-type items skipped — the House strip owns them;
+>   omitted if the feed file is missing or > 2 h old); footer
+>   "Tomorrow —" line.
+> - **The Almanac (v4's delight layer):** one or two short items per
+>   edition, rotating across three shelves — *On this day* in art or
+>   science, *The Valley* (a native plant or creature of the area, in
+>   its season), *Local history*. Draw first from the bank
+>   (`docs/ALMANAC.md`), honouring a ~30-day no-repeat window kept in
+>   the routine's usage log; an item researched fresh must be verified
+>   against a real source (encyclopedia, museum, park service) before
+>   it ships, and joins the bank with its source and date. **Truth
+>   discipline is absolute: if a fact can't be verified, the edition
+>   ships with fewer items — never invent a birthday, a date, or a
+>   plant's behaviour.**
+> - **Data recipe, every edition:** (1) **Calendar** — the day's
 >   calendar (untitled busy blocks are meetings — say so, never invent
 >   titles); (2) **Weather** — a public weather API for your coordinates:
 >   today's high/low, condition, sunset, tonight's risk, tomorrow's
@@ -124,8 +156,11 @@ the Pi fetches at :50 and casts at :00 — the buffer is the point).
 >   station you can't vouch for; (3) **House exceptions** — a read-only
 >   smart-home snapshot (§4C's read route): lights-on count, devices
 >   offline (name the vacuum plainly when it's down), batteries low,
->   anything newly unavailable vs the last edition; (4) **Day notes** —
->   clock changes, holidays, quiet-hours-relevant events.
+>   anything newly unavailable vs the last edition — all of it destined
+>   for the House strip only; (4) **Day notes** —
+>   clock changes, holidays, quiet-hours-relevant events; (5) the
+>   **feed file** (Spec D) for the attention box's personal items and
+>   the Since-the-last-edition strip.
 > - **Truth rules:** every number on the page comes from one of those four
 >   sources in this run. If a source fails, the edition says less — it
 >   never carries yesterday's figures forward as if fresh. The box score
@@ -147,7 +182,9 @@ the Pi fetches at :50 and casts at :00 — the buffer is the point).
 >    before declaring an outage; check more than one route if you have
 >    them). **Never conclude "down" from one failed connection.**
 > 2. Page server + cast-control services = active; `systemctl list-timers`
->    shows fetch, cast, gallery-watch, and ISS timers all with a NEXT time.
+>    shows fetch, cast, and ISS timers all with a NEXT time. (The
+>    gallery-watch timer is disabled by design — §3 — so its absence
+>    from the list is correct, not a failure.)
 > 3. `curl localhost:8080/` = 200 and `curl localhost:8081/` = 200 from the Pi.
 > 4. `iss.json` `generated_at` is < 36 h old (expect < 24 h).
 > 5. The served briefing page's mtime is from today's or yesterday's fetch
@@ -204,6 +241,65 @@ quirk, not a fact): when a field smells wrong, print less.
 
 **Schedule:** every 2 hours inside waking hours is plenty.
 
+**Refresh-on-cast (the freshness patch):** the 2-hour cadence still
+left a cast able to bring up hours-old data, so the loop is now also
+driven by the casting action itself. (1) The phone controller, on a
+dashboard/floorplan cast whose baked snapshot is > 20 min old, drops
+`~/refresh-request.flag` on the Pi (idempotent, 10-min dedupe) and
+casts IMMEDIATELY with the data that exists — a cast never blocks on a
+refresh. (2) An off-Pi watcher (§3) spots the flag, runs this spec's
+refresh once under the shared lock (the scheduled job takes the same
+lock; the two never run at once), and clears the flag only after a
+verified deploy — on failure the flag is renamed aside, never
+hot-looped. (3) The two pages watch their own file: a few minutes
+after load and every few minutes after, each re-reads its own
+Last-Modified and reloads if it changed, so the screen heals itself to
+the fresh snapshot without a re-cast.
+
+### Spec D — THE CONTEXT FEED (generator every ~30 min, off-Pi)
+
+**What it is:** the screens above report the house and the sky; the
+feed is where the agent's wider context lives — the day, the open
+loops, the projects, the people — curated down to a handful of short
+items a screen can carry. It has exactly two surfaces: the TV
+dashboard's full-board **Feed phase** (§1) and the briefing's
+**Since the last edition** strip (Spec A). There is deliberately **no
+standalone feed page or cast view** — the feed lives inside the two
+surfaces people already look at. **The feed has no actuator**: it
+cannot cast, interrupt, or change anything; it only writes two JSON
+files.
+
+**Division of labour:** an agent-side gathering step reads the live
+sources (calendar, the household's tracked commitments and goals, the
+§4C read-only house snapshot, public counters, the Pi's `iss.json`,
+dated-and-checkable household notes) and proposes candidate items; a
+deterministic builder script then merges in the facts it can compute
+itself (standing rhythms from the date), applies the curation rules,
+and deploys. Item types: needs-you · today · house · body · projects ·
+numbers · people · weekend · memory · delight.
+
+**Curation rules (the builder enforces them, not the gatherer):**
+expiry on every item; dedupe by stable key; needs-you capped at 3;
+memory + delight capped at 1 combined (dated and checkable only —
+grief-adjacent items never auto-surface); a quiet freeze overnight
+(house items + the first today item only); a hard cap of 8 items per
+file; an item that persists unchanged is remembered by first-seen
+time, so it sits quietly instead of re-announcing.
+
+**Tier split at generation — the privacy load-bearer:** the builder
+writes TWO files. `feed-bedroom.json` may carry the private tier
+(health-adjacent, money-adjacent, personal reminders);
+`feed-household.json` physically contains only household-tier items.
+Filtering happens at generation, so a shared screen never receives
+bedroom data at all — there is no display-side setting to get wrong.
+Email, money detail, and health content enter the feed only under
+their own explicit household rulings, tier by tier; until then they
+stay out entirely.
+
+**Staleness:** every file carries its generation time; surfaces show
+it ("updated HH:MM"), dim on > 90 min, and the dashboard skips its
+feed phase entirely rather than present a stale board.
+
 ---
 
 ## 5. Failure + recovery runbook
@@ -232,9 +328,9 @@ from the Pi with `curl` before editing code.
   file; the page refuses it at 36 h and says predictions are unavailable.
   TLE data stays accurate for days; a week of failures is a chore, not an
   emergency.
-- **Weather / air-quality APIs** — Tonight's Sky, AQI, Storm wind,
-  Mycelium, briefing weather, §4C sunrise/sunset. Pages show labelled
-  specimen fallbacks on failure.
+- **Weather / air-quality APIs** — Tonight's Sky, Storm wind,
+  Mycelium, briefing weather, §4C sunrise/sunset, the feed's weather
+  items. Pages show labelled specimen fallbacks on failure.
 - **Radar tile provider** — Storm radar scene only; the other scenes
   carry the page.
 - **National weather service alerts API** — Storm alert poster + polygons.
