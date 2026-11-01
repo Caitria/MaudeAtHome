@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tonight's Sky</title>
+<!--
+  DESIGN: a night-sky page should BE the
+  night sky: deep indigo space, a live starfield, the Moon drawn at tonight's
+  real phase, autumn constellations, ethereal violet/cyan/silver. Peach glass
+  remains the skin for household-information pages (briefing/dashboard/floorplan).
+  DATA: Open-Meteo hourly cloud_cover + sunset for YOUR_LAT/YOUR_LON; verdict GO/WAIT/SKIP from 7 PM–midnight cover; Moon computed in-page
+  (synodic approximation, ±1 day, labelled); ISS position from wheretheiss.at.
+  ISS PASSES: real pass predictions are
+  computed nightly on the caster Pi by iss-passes.py (see pi/) (CelesTrak TLE + pure-python
+  SGP4, systemd iss-passes.timer ~18:00 + boot) into iss.json beside this page;
+  this page fetches it same-origin and shows the next VISIBLE pass (sunlit
+  station + sun below -4 deg here) plus tonight's honest state — including
+  when a crossing happens in Earth's shadow and is NOT visible. If iss.json
+  is missing or older than 36 h the passes element says so and shows no times.
+  Fetch failure (weather) -> specimen data + visible SPECIMEN banner.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #040613; }
+  body { font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif; color: #E8EBFF; }
+  #stage { position: fixed; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: center center;
+           background:
+             radial-gradient(1100px 620px at 78% -10%, rgba(88,60,180,.38), rgba(88,60,180,0) 60%),
+             radial-gradient(900px 560px at 8% 108%, rgba(24,90,140,.30), rgba(24,90,140,0) 60%),
+             radial-gradient(700px 480px at 45% 40%, rgba(52,32,110,.22), rgba(52,32,110,0) 65%),
+             linear-gradient(178deg, #060A24 0%, #040613 55%, #03040C 100%);
+           overflow: hidden; }
+  #stars { position: absolute; inset: 0; }
+  #constellations { position: absolute; right: 30px; top: 6px; opacity: .95; }
+  .glass { background: rgba(16, 20, 46, .52); border: 1px solid rgba(160, 180, 255, .20); border-radius: 22px;
+           backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+           box-shadow: 0 14px 34px rgba(0,0,0,.35), inset 0 1px 0 rgba(200,215,255,.10); }
+
+  #specimen { display: none; position: absolute; top: 26px; left: 50%; transform: translateX(-50%); z-index: 9;
+    background: #B3261E; color: #fff; font-weight: 700; font-size: 20px; letter-spacing: .14em; padding: 10px 26px; border-radius: 999px; }
+  #specimen.on { display: block; }
+
+  header { position: absolute; left: 64px; top: 46px; right: 64px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .kicker { font-size: 21px; letter-spacing: .3em; text-transform: uppercase; color: #9FB4FF; font-weight: 700; }
+  h1 { font-size: 58px; font-weight: 620; margin-top: 10px; color: #F2F4FF; text-shadow: 0 0 26px rgba(140,160,255,.35); }
+  #dateline { font-size: 24px; color: #B9C4F2; margin-top: 8px; }
+  .clockwrap { text-align: right; }
+  #clock { font-size: 76px; font-weight: 560; font-variant-numeric: tabular-nums; color: #EDF0FF; line-height: 1; text-shadow: 0 0 22px rgba(140,160,255,.3); }
+  .clocksub { font-size: 21px; color: #93A5E8; margin-top: 8px; }
+
+  .leftcol { position: absolute; left: 64px; top: 300px; width: 880px; }
+  .verdict { font-size: 168px; font-weight: 750; line-height: .95; letter-spacing: .01em; }
+  .verdict.go { color: #8FF5C8; text-shadow: 0 0 44px rgba(80,255,180,.45); }
+  .verdict.wait { color: #FFD98A; text-shadow: 0 0 44px rgba(255,200,90,.4); }
+  .verdict.skip { color: #FF9DB0; text-shadow: 0 0 44px rgba(255,110,140,.4); }
+  #verdictwhy { font-size: 27px; line-height: 1.4; color: #C9D2F8; margin-top: 18px; max-width: 830px; }
+  .sunsetline { font-size: 23px; color: #9FB4FF; margin-top: 20px; }
+  .sunsetline b { color: #E8EBFF; font-weight: 650; }
+
+  .cloudcard { margin-top: 30px; padding: 24px 28px 18px; width: 880px; }
+  .cloudcard h2 { font-size: 19px; letter-spacing: .24em; text-transform: uppercase; color: #9FB4FF; margin-bottom: 16px; font-weight: 700; }
+  .hourrow { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; font-size: 21px; }
+  .hourrow .hl { width: 92px; color: #C9D2F8; font-variant-numeric: tabular-nums; }
+  .hourrow .bar { flex: 1; height: 15px; border-radius: 99px; background: rgba(140,160,255,.14); overflow: hidden; }
+  .hourrow .bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #6E8CFF, #B18CFF); opacity: .85; }
+  .hourrow .hv { width: 58px; text-align: right; color: #E8EBFF; font-variant-numeric: tabular-nums; }
+
+  .rightcol { position: absolute; right: 64px; top: 248px; bottom: 70px; width: 470px;
+    display: flex; flex-direction: column; justify-content: space-between; }
+  .mooncard { width: 100%; padding: 20px 30px; text-align: left; }
+  .mooncard h2 { font-size: 19px; letter-spacing: .24em; text-transform: uppercase; color: #9FB4FF; margin-bottom: 8px; font-weight: 700; }
+  #moondisc { display: block; margin: 4px auto 2px; width: 110px; height: 110px; }
+  #moon { font-size: 29px; font-weight: 650; color: #F4F1DE; text-align: center; }
+  #moonage { font-size: 19.5px; line-height: 1.35; color: #C9D2F8; text-align: center; margin-top: 6px; }
+  .moonfine { font-size: 17px; color: #8494CC; text-align: center; margin-top: 10px; line-height: 1.35; }
+
+  .isscard { width: 100%; padding: 22px 30px; }
+  .isscard h2 { font-size: 19px; letter-spacing: .24em; text-transform: uppercase; color: #9FB4FF; margin-bottom: 8px; font-weight: 700; }
+  #issnext { font-size: 25px; font-weight: 640; line-height: 1.32; color: #EDF0FF; }
+  #issnext .when { color: #8FF5C8; }
+  #isstonight { font-size: 19px; line-height: 1.38; color: #C9D2F8; margin-top: 9px; }
+  #iss { font-size: 18.5px; line-height: 1.35; color: #93A5E8; margin-top: 11px; }
+  .issfine { font-size: 15.5px; color: #8494CC; margin-top: 9px; line-height: 1.35; }
+
+  footer { position: absolute; left: 64px; right: 64px; bottom: 40px; display: flex; justify-content: space-between;
+           font-size: 18px; color: rgba(160,175,230,.75); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="stars" width="1920" height="1080"></canvas>
+
+  <!-- Autumn evening sky over YOUR_TOWN: Cassiopeia (W), Cygnus (the Cross), Pegasus + Andromeda. Stylised positions. -->
+  <svg id="constellations" width="900" height="380" viewBox="0 0 900 380">
+    <g stroke="rgba(170,195,255,.38)" stroke-width="1.6">
+      <polyline points="70,120 150,80 235,105 320,60 405,95" fill="none"/>
+      <polyline points="560,60 560,150 560,240 500,180 620,180" fill="none"/>
+      <polyline points="700,290 790,290 790,205 700,205 700,290 640,330" fill="none"/>
+    </g>
+    <g fill="#EAF0FF">
+      <circle cx="70" cy="120" r="4.5"/><circle cx="150" cy="80" r="5.5"/><circle cx="235" cy="105" r="4.5"/><circle cx="320" cy="60" r="5.5"/><circle cx="405" cy="95" r="4.5"/>
+      <circle cx="560" cy="60" r="5.5"/><circle cx="560" cy="150" r="6.5"/><circle cx="560" cy="240" r="5"/><circle cx="500" cy="180" r="4"/><circle cx="620" cy="180" r="4"/>
+      <circle cx="700" cy="290" r="5"/><circle cx="790" cy="290" r="4.5"/><circle cx="790" cy="205" r="5"/><circle cx="700" cy="205" r="4.5"/><circle cx="640" cy="330" r="3.6"/>
+    </g>
+    <g font-family="inherit" font-size="19" letter-spacing="3" fill="rgba(175,196,255,.85)">
+      <text x="150" y="155">CASSIOPEIA</text>
+      <text x="586" y="150">CYGNUS</text>
+      <text x="672" y="368">PEGASUS</text>
+    </g>
+  </svg>
+
+  <div id="specimen">SPECIMEN — LIVE FETCH FAILED</div>
+
+  <header>
+    <div>
+      <div class="kicker">Tonight's Sky · YOUR_TOWN</div>
+      <h1>Should we go out and look up?</h1>
+      <div id="dateline">Tonight —</div>
+    </div>
+    <div class="clockwrap">
+      <div id="clock">--:--</div>
+      <div class="clocksub" id="sunsetline">Sunset —</div>
+    </div>
+  </header>
+
+  <div class="leftcol">
+    <div class="verdict" id="verdict">…</div>
+    <div id="verdictwhy">Reading tonight's cloud cover…</div>
+    <div class="sunsetline">Sunset <b id="sunset">—</b> · <span id="darknote">—</span></div>
+    <div class="cloudcard glass">
+      <h2>Cloud cover — 7 PM to midnight</h2>
+      <div id="hours"></div>
+    </div>
+  </div>
+
+  <div class="rightcol">
+  <div class="mooncard glass">
+    <h2>The Moon — tonight's phase</h2>
+    <canvas id="moondisc" width="196" height="196"></canvas>
+    <div id="moon">—</div>
+    <div id="moonage">—</div>
+  </div>
+
+  <div class="isscard glass">
+    <h2>ISS — passes over this house</h2>
+    <div id="issnext">Reading pass predictions…</div>
+    <div id="isstonight"></div>
+    <div id="iss">—</div>
+    <div class="issfine">Computed nightly on the house Pi · CelesTrak + SGP4 · visible = sunlit station + dark sky here · live position wheretheiss.at</div>
+  </div>
+  </div>
+
+  <footer>
+    <div>Sources: Open-Meteo (cloud cover, sunset) · CelesTrak + SGP4 on the house Pi (ISS passes) · wheretheiss.at (ISS position) · Moon computed in-page</div>
+    <div id="fetched">fetched: —</div>
+  </footer>
+</div>
+
+<script>
+  function fit() {
+    var s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    document.getElementById('stage').style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+  }
+  function tick() {
+    var d = new Date(), h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    document.getElementById('clock').textContent = h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  function fmtTime(iso) {
+    var p = iso.split('T')[1].split(':'), h = +p[0], m = p[1];
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    return h + ':' + m + ' ' + ap;
+  }
+  function fmtClock(d) {
+    var h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    return h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  var DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  function moonPhase() { // Synodic approximation: reference new moon 2000-01-06 18:14 UTC.
+    var synodic = 29.53058867;
+    var ref = Date.UTC(2000, 0, 6, 18, 14) / 86400000;
+    var now = Date.now() / 86400000;
+    var age = ((now - ref) % synodic + synodic) % synodic;
+    var illum = Math.round((1 - Math.cos(2 * Math.PI * age / synodic)) / 2 * 100);
+    var name = age < 1.8 ? 'New moon' : age < 7.4 ? 'Waxing crescent' : age < 9.2 ? 'First quarter'
+      : age < 14.8 ? 'Waxing gibbous' : age < 16.6 ? 'Full moon' : age < 22.1 ? 'Waning gibbous'
+      : age < 23.9 ? 'Last quarter' : 'Waning crescent';
+    return { age: age, illum: illum, name: name };
+  }
+
+  function drawMoon(age) { // Draw tonight's actual phase: lit limb + terminator ellipse.
+    var c = document.getElementById('moondisc'), ctx = c.getContext('2d');
+    var cx = 98, cy = 98, r = 76, synodic = 29.53058867;
+    var p = age / synodic, waxing = p < 0.5;
+    var cosT = Math.cos(2 * Math.PI * p);
+    ctx.clearRect(0, 0, 196, 196);
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+    ctx.fillStyle = '#141B36'; ctx.fillRect(0, 0, 196, 196); // dark side
+    var grad = ctx.createRadialGradient(cx - 26, cy - 26, 10, cx, cy, r);
+    grad.addColorStop(0, '#FFFDF2'); grad.addColorStop(.75, '#F1EDD8'); grad.addColorStop(1, '#D9D2B8');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    // Lit region: semicircle on the lit side + terminator ellipse.
+    if (waxing) { ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 2, false); }
+    else { ctx.arc(cx, cy, r, Math.PI / 2, Math.PI * 1.5, false); }
+    ctx.ellipse(cx, cy, Math.abs(cosT) * r, r, 0, 0, Math.PI * 2, (waxing ? cosT < 0 : cosT > 0));
+    ctx.fill();
+    // A few maria for texture, only sensible on the lit face.
+    ctx.fillStyle = 'rgba(120,118,100,.18)';
+    [[-20, -25, 16], [13, -7, 12], [-5, 21, 14], [25, 28, 8]].forEach(function(m) {
+      ctx.beginPath(); ctx.arc(cx + m[0], cy + m[1], m[2], 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.restore();
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(220,228,255,.35)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, r + 9, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(160,180,255,.12)'; ctx.lineWidth = 10; ctx.stroke();
+  }
+
+  // Starfield: fixed stars, gentle twinkle.
+  (function stars() {
+    var c = document.getElementById('stars'), ctx = c.getContext('2d');
+    var S = [];
+    for (var i = 0; i < 300; i++) S.push({ x: Math.random() * 1920, y: Math.random() * 1080, r: Math.random() * 1.6 + .4, p: Math.random() * Math.PI * 2, s: .4 + Math.random() * 1.2 });
+    function frame(t) {
+      ctx.clearRect(0, 0, 1920, 1080);
+      S.forEach(function(st) {
+        var a = .35 + .55 * (0.5 + 0.5 * Math.sin(t / 1000 * st.s + st.p));
+        ctx.globalAlpha = a; ctx.fillStyle = '#E6EBFF';
+        ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+
+  function render(data, specimen) {
+    if (specimen) document.getElementById('specimen').className = 'on';
+    var d = new Date();
+    document.getElementById('dateline').textContent = 'Tonight — ' + DAYS[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' ' + d.getDate();
+    document.getElementById('sunset').textContent = fmtTime(data.sunset);
+    document.getElementById('sunsetline').textContent = 'Sunset ' + fmtTime(data.sunset);
+    document.getElementById('darknote').textContent = 'Dark enough for stars around ' + fmtTime(data.sunset).replace(/(\d+):/, function(m, h){ return (+h + 1) + ':'; });
+
+    var rows = '', sum = 0, n = 0, lateSum = 0, lateN = 0, clearsAt = null;
+    data.hours.forEach(function(hh) {
+      var hr = +hh.t.split('T')[1].split(':')[0];
+      rows += '<div class="hourrow"><span class="hl">' + fmtTime(hh.t) + '</span><span class="bar"><i style="width:' + hh.c + '%"></i></span><span class="hv">' + hh.c + '%</span></div>';
+      sum += hh.c; n++;
+      if (hr >= 21 || hr === 0) { lateSum += hh.c; lateN++; }
+      if (clearsAt === null && hr >= 19 && hh.c < 25) clearsAt = hh.t;
+    });
+    document.getElementById('hours').innerHTML = rows;
+    var avg = n ? sum / n : 100, lateAvg = lateN ? lateSum / lateN : avg;
+
+    var v = document.getElementById('verdict'), why = document.getElementById('verdictwhy');
+    if (avg <= 20) {
+      v.textContent = 'GO'; v.className = 'verdict go';
+      why.textContent = 'Clear evening — average cloud cover about ' + Math.round(avg) + '% between 7 PM and midnight. Take the blanket out.';
+    } else if (avg <= 50 && lateAvg < avg - 10) {
+      v.textContent = 'WAIT'; v.className = 'verdict wait';
+      why.textContent = 'Cloudy early, clearing later — about ' + Math.round(avg) + '% early, down to about ' + Math.round(lateAvg) + '% late.' + (clearsAt ? ' First clear hour around ' + fmtTime(clearsAt) + '.' : '');
+    } else if (avg <= 50) {
+      v.textContent = 'WAIT'; v.className = 'verdict wait';
+      why.textContent = 'Partly cloudy all evening — about ' + Math.round(avg) + '% average cover. Bright stars and the Moon will get through; faint stuff won\'t.';
+    } else {
+      v.textContent = 'SKIP'; v.className = 'verdict skip';
+      why.textContent = 'Cloud holding at about ' + Math.round(avg) + '% average cover tonight. Save the trip outside for another night.';
+    }
+
+    var mp = moonPhase();
+    drawMoon(mp.age);
+    document.getElementById('moon').textContent = mp.name + ' · ' + mp.illum + '% lit';
+    document.getElementById('moonage').textContent = 'Moon age about ' + mp.age.toFixed(1) + ' days' + (mp.illum > 70 ? ' — bright moonlight will wash out faint stars.' : mp.illum < 30 ? ' — a dark sky, good for faint stars if the cloud clears.' : '.');
+
+    document.getElementById('fetched').textContent = 'fetched: ' + fmtClock(new Date()) + (specimen ? ' · SPECIMEN (fetch failed)' : ' · live from Open-Meteo');
+  }
+
+  function specimenData() {
+    var today = new Date(), iso = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
+    var hours = [], sample = [62, 55, 48, 40, 30, 22];
+    for (var i = 0; i < 6; i++) hours.push({ t: iso + 'T' + (19 + i > 23 ? '0' + (19 + i - 24) : 19 + i) + ':00', c: sample[i] });
+    return { sunset: iso + 'T18:09', hours: hours };
+  }
+
+  function loadISS() {
+    fetch('https://api.wheretheiss.at/v1/satellites/25544').then(function(r) { return r.json(); }).then(function(j) {
+      document.getElementById('iss').textContent = 'Right now: ' + Math.abs(j.latitude).toFixed(1) + '° ' + (j.latitude >= 0 ? 'N' : 'S') + ', ' + Math.abs(j.longitude).toFixed(1) + '° ' + (j.longitude >= 0 ? 'E' : 'W') + ' · ' + j.visibility + '.';
+    }).catch(function() {
+      document.getElementById('iss').textContent = 'Live position unavailable right now.';
+    });
+  }
+
+  var YOUR_LAT = 0.0, YOUR_LON = 0.0; // CONFIG: set to your home's latitude/longitude
+  function fmtPassTime(iso) { // iss.json times carry their PT offset; show clock time only.
+    return fmtTime(iso);
+  }
+  function dayLabel(d) {
+    var now = new Date();
+    var sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    var tom = new Date(now); tom.setDate(now.getDate() + 1);
+    var isTom = d.getFullYear() === tom.getFullYear() && d.getMonth() === tom.getMonth() && d.getDate() === tom.getDate();
+    if (sameDay) return 'Today';
+    if (isTom) return 'Tomorrow';
+    return DAYS[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' ' + d.getDate();
+  }
+  function tonightWindow() { // [start, end) of "tonight": 5 PM -> 6 AM.
+    var now = new Date(), start = new Date(now), end = new Date(now);
+    if (now.getHours() >= 12) { start.setHours(17, 0, 0, 0); end.setDate(now.getDate() + 1); end.setHours(6, 0, 0, 0); }
+    else { start.setDate(now.getDate() - 1); start.setHours(17, 0, 0, 0); end.setHours(6, 0, 0, 0); }
+    return [start, end];
+  }
+
+  function loadPasses() {
+    var nextEl = document.getElementById('issnext'), tonEl = document.getElementById('isstonight');
+    fetch('iss.json').then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function(doc) {
+      var gen = new Date(doc.generated_at);
+      if (isNaN(gen) || (Date.now() - gen.getTime()) > 36 * 3600 * 1000) throw new Error('stale');
+      var now = new Date();
+      var upcoming = doc.passes.filter(function(p) { return new Date(p.set) > now; });
+      var nextVis = null;
+      for (var i = 0; i < upcoming.length; i++) if (upcoming[i].visible) { nextVis = upcoming[i]; break; }
+      var win = tonightWindow();
+      var tonight = upcoming.filter(function(p) { var r = new Date(p.rise); return r >= win[0] && r < win[1]; });
+
+      // Tonight's honest state: eclipsed crossings are named, not hidden,
+      // and a pre-dawn visible pass still counts as "tonight" (5 PM -> 6 AM).
+      var tonVis = tonight.filter(function(p) { return p.visible; });
+      var tonEcl = tonight.filter(function(p) { return !p.visible; });
+      var eclPhrase = '';
+      if (tonEcl.length === 1) {
+        eclPhrase = 'crosses at ' + fmtPassTime(tonEcl[0].rise) + ' (up to ' + tonEcl[0].peak_alt_deg + '°) — in Earth\'s shadow, not visible';
+      } else if (tonEcl.length > 1) {
+        eclPhrase = 'crosses at ' + tonEcl.slice(0, 2).map(function(p) { return fmtPassTime(p.rise) + ' (' + p.peak_alt_deg + '°)'; }).join(' and ') + ' — both in Earth\'s shadow, not visible';
+      }
+      if (eclPhrase && tonVis.length) {
+        tonEl.textContent = 'Tonight: the station ' + eclPhrase + '. Visible pass tonight: ' + fmtPassTime(tonVis[0].rise) + ', before dawn.';
+      } else if (eclPhrase) {
+        tonEl.textContent = 'Tonight: the station ' + eclPhrase + '.';
+      } else if (tonVis.length) {
+        tonEl.textContent = 'That visible pass is tonight — worth stepping out for, cloud permitting.';
+      } else {
+        tonEl.textContent = 'No pass over the house tonight.';
+      }
+
+      if (nextVis) {
+        var rp = new Date(nextVis.rise);
+        var inTonight = rp >= win[0] && rp < win[1];
+        nextEl.innerHTML = 'Next visible pass — <span class="when">' + (inTonight ? 'tonight' : dayLabel(rp).toLowerCase()) + '</span><br>' +
+          'Rises ' + fmtPassTime(nextVis.rise) + ' in the ' + nextVis.rise_dir + ' · peaks ' + fmtPassTime(nextVis.peak) + ' at ' + nextVis.peak_alt_deg + '° · sets ' + fmtPassTime(nextVis.set) + ' in the ' + nextVis.set_dir;
+      } else {
+        nextEl.textContent = 'No visible pass in the next few days';
+      }
+    }).catch(function() {
+      nextEl.textContent = 'Pass predictions unavailable';
+      tonEl.textContent = 'The nightly pass computation on the house Pi hasn\'t refreshed — showing no times rather than guessed ones.';
+    });
+  }
+
+  function load() {
+    var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + YOUR_LAT + '&longitude=' + YOUR_LON + '&hourly=cloud_cover&daily=sunset&timezone=auto&forecast_days=2';
+    fetch(url).then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function(j) {
+      var today = new Date(), iso = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
+      var hours = [];
+      j.hourly.time.forEach(function(t, i) {
+        var hr = +t.split('T')[1].split(':')[0];
+        if (t.indexOf(iso) === 0 && hr >= 19) hours.push({ t: t, c: j.hourly.cloud_cover[i] });
+        if (t.indexOf(iso) !== 0 && hr === 0 && hours.length) hours.push({ t: t, c: j.hourly.cloud_cover[i] });
+      });
+      render({ sunset: j.daily.sunset[0], hours: hours }, false);
+    }).catch(function() { render(specimenData(), true); });
+    loadISS();
+    loadPasses();
+  }
+
+  window.addEventListener('resize', fit);
+  fit(); tick(); setInterval(tick, 15000); setInterval(fit, 30000);
+  drawMoon(moonPhase().age);
+  load();
+</script>
+</body>
+</html>

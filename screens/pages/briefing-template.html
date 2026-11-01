@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The HOUSE_NAME Edition — Briefing Template</title>
+<!--
+  BRIEFING TEMPLATE — "THE MORNING PAPER". A broadsheet front page for the
+  house: masthead, serif lede headline, ruled columns, alerts contained in
+  a boxed notice, the house as a box score. A fresh edition is composed
+  twice a day (calendar + weather + a smart-home snapshot) and baked into
+  a static page — see docs/OPERATIONS.md for the edition routine.
+  Palettes: the AM "Morning Edition" uses paper #FAF8F7 / ink #161E34;
+  the PM "Evening Edition" (shown here) inverts to ground #131A2E, ink
+  #E8E4D8, accent Dawn #FEDCC3. Headline serif ~54px, section heads 19px
+  caps, body 22px, mono for times/numbers.
+  ALL COPY BELOW IS PLACEHOLDER — replace it with your own edition.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #131A2E; }
+  body { font-family: Georgia, "Times New Roman", serif; color: #E8E4D8; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  #stage { position: fixed; left: 50%; top: 50%; width: 1280px; height: 800px; transform-origin: center center; padding: 24px 44px 16px; }
+
+  .masthead { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 10px; }
+  .paper { font-size: 30px; letter-spacing: .34em; font-weight: 700; text-transform: uppercase; }
+  .paper small { display: block; font-size: 14.5px; letter-spacing: .22em; color: #9FBBC3; margin-top: 5px; font-weight: 400; }
+  #clock { font-size: 40px; line-height: 1; }
+  .clocksub { font-size: 14.5px; color: #9FBBC3; text-align: right; margin-top: 4px; letter-spacing: .12em; text-transform: uppercase; }
+  .doublerule { border-top: 3px solid #E8E4D8; border-bottom: 1px solid #E8E4D8; height: 5px; margin-bottom: 20px; }
+
+  h1 { font-size: 51px; line-height: 1.13; font-weight: 700; max-width: 800px; }
+  h1 .hl { background: rgba(254, 220, 195, .92); color: #161E34; padding: 0 8px; }
+  .byline { font-size: 16.5px; color: #9FBBC3; font-style: italic; margin-top: 9px; }
+
+  .cols { display: flex; gap: 34px; margin-top: 17px; }
+  .col { flex: 1; }
+  .col.wide { flex: 1.12; }
+  .col + .col { border-left: 1px solid rgba(232,228,216,.28); padding-left: 34px; }
+  h2 { font-size: 18px; letter-spacing: .26em; text-transform: uppercase; border-bottom: 1px solid rgba(232,228,216,.45);
+       padding-bottom: 6px; margin-bottom: 11px; font-family: ui-monospace, Menlo, monospace; font-weight: 700; }
+  .item { font-size: 20.5px; line-height: 1.3; margin-bottom: 11px; }
+  .item .t { font-family: ui-monospace, Menlo, monospace; font-size: 19px; color: #FEDCC3; }
+  .item .done { color: #9FBBC3; }
+  .item .note { display: block; font-size: 18px; color: #B9C4C9; font-style: italic; margin-top: 2px; }
+  .wrow { display: flex; justify-content: space-between; align-items: baseline; font-size: 20.5px; padding: 5px 0; border-bottom: 1px dotted rgba(232,228,216,.25); }
+  .wrow .v { font-family: ui-monospace, Menlo, monospace; font-size: 20px; }
+  .wrow:last-child { border-bottom: none; }
+
+  .notice { border: 2px solid #FEDCC3; padding: 13px 18px 7px; margin-bottom: 16px; }
+  .notice h2 { border-bottom-color: rgba(254,220,195,.5); color: #FEDCC3; }
+  .notice .item { font-size: 19.5px; margin-bottom: 9px; }
+  .boxscore { border: 1px solid rgba(232,228,216,.45); padding: 13px 18px 9px; }
+  .bsrow { display: flex; justify-content: space-between; font-family: ui-monospace, Menlo, monospace; font-size: 20px; padding: 5px 0; }
+  .bsrow .k { letter-spacing: .1em; color: #B9C4C9; font-size: 16.5px; padding-top: 3px; }
+
+  .footrule { border-top: 1px solid #E8E4D8; margin-top: 15px; padding-top: 12px; display: flex; justify-content: space-between; align-items: baseline; }
+  .tomorrow { font-size: 21px; }
+  .tomorrow b { font-family: ui-monospace, Menlo, monospace; font-size: 16.5px; letter-spacing: .2em; color: #FEDCC3; margin-right: 10px; }
+  #vp { font-size: 13px; color: rgba(159,187,195,.6); font-family: ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="masthead">
+    <div class="paper">The HOUSE_NAME Edition<small>Evening Edition · YOUR_TOWN</small></div>
+    <div>
+      <div id="clock" class="mono">--:--</div>
+      <div class="clocksub">Day · Date · № 1</div>
+    </div>
+  </div>
+  <div class="doublerule"></div>
+
+  <h1>Your headline goes here — <span class="hl">the key phrase highlighted</span> like this.</h1>
+  <div class="byline">The byline: one sentence of colour under the headline — the day's weather, mood, or warning in plain words.</div>
+
+  <div class="cols">
+    <div class="col wide">
+      <h2>Today, in brief</h2>
+      <div class="item"><span class="t">9:00 AM</span> · A sample calendar item <span class="done">— done ✓</span></div>
+      <div class="item"><span class="t">EVENING</span> · A sample evening item<span class="note">A note in italics rides under its item.</span></div>
+      <div class="item"><span class="t">11:00 PM</span> · Quiet hours begin<span class="note">Displays rest; the briefing returns at seven.</span></div>
+    </div>
+
+    <div class="col">
+      <h2>Weather</h2>
+      <div class="wrow"><span>Now</span><span class="v">--° · sample</span></div>
+      <div class="wrow"><span>Sunset</span><span class="v">--:-- PM</span></div>
+      <div class="wrow"><span>Tonight</span><span class="v">low --°</span></div>
+      <div class="wrow"><span>Rain chance</span><span class="v">--%</span></div>
+      <div class="wrow"><span>Tomorrow</span><span class="v">--° · sample</span></div>
+    </div>
+
+    <div class="col">
+      <div class="notice">
+        <h2>Needs your attention</h2>
+        <div class="item">Sample notice: the robot vacuum is offline.</div>
+        <div class="item">Sample notice: N lights awaiting attention.</div>
+        <div class="item">Sample notice: a battery is low.</div>
+      </div>
+      <div class="boxscore">
+        <h2>The House — box score</h2>
+        <div class="bsrow"><span class="k">LIGHTS ON</span><span>1</span></div>
+        <div class="bsrow"><span class="k">BATTERIES LOW</span><span>2</span></div>
+        <div class="bsrow"><span class="k">DEVICES OFFLINE</span><span>5</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footrule">
+    <div class="tomorrow"><b>TOMORROW —</b>One line about tomorrow: the first appointment, a clock change, the sunrise.</div>
+    <div id="vp">viewport: measuring…</div>
+  </div>
+</div>
+
+<script>
+  function fit() {
+    var s = Math.min(window.innerWidth / 1280, window.innerHeight / 800);
+    document.getElementById('stage').style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+    document.getElementById('vp').textContent = 'viewport: ' + window.innerWidth + ' × ' + window.innerHeight + ' · scale ' + s.toFixed(2);
+  }
+  function tick() {
+    var d = new Date(), h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    document.getElementById('clock').textContent = h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  window.addEventListener('resize', fit);
+  fit(); tick(); setInterval(tick, 15000); setInterval(fit, 30000);
+</script>
+</body>
+</html>

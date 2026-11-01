@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AQI Sentinel</title>
+<!--
+  DESIGN: the first version of this page showed
+  the AQI number on a peach page whose colour meant nothing. Now the PAGE IS
+  THE READING: a full-screen atmospheric gradient in the current AQI category
+  colour — clean green air looks green, smoke-season air looks like smoke.
+  DATA (unchanged, verified): Open-Meteo Air Quality API (CAMS model), US AQI
+  + PM2.5 + PM10 for YOUR_LAT/YOUR_LON. Fetch failure -> specimen AQI 42 (labelled).
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body { font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif; color: #fff;
+    background: linear-gradient(165deg, #0B3D2E 0%, #146B4A 55%, #1E7A56 100%); transition: background 1.2s ease; }
+  #haze { position: fixed; inset: 0; overflow: hidden; display: none; pointer-events: none; }
+  #haze.on { display: block; }
+  .smoke { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .28; background: #C9C2B4;
+    animation: drift 26s ease-in-out infinite alternate; }
+  .s1 { width: 760px; height: 420px; left: -120px; top: 8%; }
+  .s2 { width: 900px; height: 480px; right: -180px; top: 40%; animation-duration: 34s; }
+  .s3 { width: 640px; height: 380px; left: 30%; bottom: -160px; animation-duration: 30s; }
+  @keyframes drift { from { transform: translateX(-4%); } to { transform: translateX(5%); } }
+
+  #stage { position: fixed; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: center center; padding: 52px 72px 40px; }
+  #specimen { display: none; position: absolute; top: 44px; left: 50%; transform: translateX(-50%); z-index: 9;
+    background: #B3261E; color: #fff; font-weight: 700; font-size: 20px; letter-spacing: .14em; padding: 10px 26px; border-radius: 999px; }
+  #specimen.on { display: block; }
+
+  header { display: flex; justify-content: space-between; align-items: flex-start; }
+  .kicker { font-size: 21px; letter-spacing: .3em; text-transform: uppercase; font-weight: 700; opacity: .9; text-shadow: 0 2px 12px rgba(0,0,0,.35); }
+  #clock { font-size: 64px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; text-shadow: 0 2px 14px rgba(0,0,0,.4); }
+  .clocksub { font-size: 20px; opacity: .85; margin-top: 8px; text-align: right; text-shadow: 0 1px 8px rgba(0,0,0,.4); }
+
+  .hero { display: flex; align-items: flex-end; gap: 64px; margin-top: 54px; }
+  .numblock { flex-shrink: 0; }
+  #aqinum { font-size: 380px; font-weight: 720; line-height: .9; letter-spacing: -.02em;
+    text-shadow: 0 4px 30px rgba(0,0,0,.45); font-variant-numeric: tabular-nums; }
+  #aqicat { display: inline-block; margin-top: 8px; font-size: 30px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    background: rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 10px 26px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .copy { flex: 1; padding-bottom: 26px; }
+  #headline { font-size: 54px; font-weight: 650; line-height: 1.12; text-shadow: 0 2px 16px rgba(0,0,0,.4); max-width: 980px; }
+  .pmrow { display: flex; gap: 16px; margin-top: 22px; }
+  .pm { font-size: 24px; font-weight: 640; background: rgba(0,0,0,.26); border: 1px solid rgba(255,255,255,.28);
+    border-radius: 999px; padding: 10px 24px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+
+  .guidance { margin-top: 44px; max-width: 1560px; background: rgba(0,0,0,.30); border: 1px solid rgba(255,255,255,.26);
+    border-radius: 24px; padding: 26px 34px; backdrop-filter: blur(14px) saturate(1.1); -webkit-backdrop-filter: blur(14px) saturate(1.1); }
+  .guidance h2 { font-size: 19px; letter-spacing: .24em; text-transform: uppercase; opacity: .85; margin-bottom: 10px; font-weight: 700; }
+  #guidance { font-size: 27px; line-height: 1.42; }
+
+  .scale { margin-top: 44px; }
+  .scalebar { display: flex; gap: 8px; }
+  .seg { flex: 1; height: 46px; border-radius: 12px; background: rgba(255,255,255,.16); position: relative;
+    display: flex; align-items: center; justify-content: center; font-size: 17.5px; font-weight: 650; color: rgba(255,255,255,.75); }
+  #sc1 { background: rgba(20, 122, 74, .55); } #sc2 { background: rgba(181, 138, 16, .55); }
+  #sc3 { background: rgba(194, 84, 27, .55); } #sc4 { background: rgba(168, 28, 44, .55); }
+  #sc5 { background: rgba(116, 38, 131, .55); } #sc6 { background: rgba(110, 24, 35, .55); }
+  .seg.on { color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 0 28px rgba(255,255,255,.35); }
+  .seg.on::after { content: '▲'; position: absolute; top: -26px; left: 50%; transform: translateX(-50%); font-size: 20px; }
+  .scaleticks { display: flex; justify-content: space-between; font-size: 17px; opacity: .75; margin-top: 10px; }
+
+  footer { display: flex; justify-content: space-between; margin-top: 36px; font-size: 18px; opacity: .8; text-shadow: 0 1px 8px rgba(0,0,0,.4); }
+</style>
+</head>
+<body>
+<div id="haze"><div class="smoke s1"></div><div class="smoke s2"></div><div class="smoke s3"></div></div>
+<div id="stage">
+  <div id="specimen">SPECIMEN — LIVE FETCH FAILED</div>
+  <header>
+    <div class="kicker">AQI Sentinel · YOUR_TOWN</div>
+    <div>
+      <div id="clock">--:--</div>
+      <div class="clocksub">US AQI · PM2.5 · PM10</div>
+    </div>
+  </header>
+
+  <div class="hero">
+    <div class="numblock">
+      <div id="aqinum">—</div>
+      <div id="aqicat">—</div>
+    </div>
+    <div class="copy">
+      <div id="headline">Reading the air…</div>
+      <div class="pmrow"><span class="pm" id="pm25">PM2.5 —</span><span class="pm" id="pm10">PM10 —</span></div>
+    </div>
+  </div>
+
+  <div class="guidance">
+    <h2>What this means</h2>
+    <div id="guidance">Loading guidance for the current category…</div>
+  </div>
+
+  <div class="scale">
+    <div class="scalebar">
+      <div class="seg" id="sc1">Good</div>
+      <div class="seg" id="sc2">Moderate</div>
+      <div class="seg" id="sc3">Sensitive groups</div>
+      <div class="seg" id="sc4">Unhealthy</div>
+      <div class="seg" id="sc5">Very unhealthy</div>
+      <div class="seg" id="sc6">Hazardous</div>
+    </div>
+    <div class="scaleticks"><span>0</span><span>50</span><span>100</span><span>150</span><span>200</span><span>300</span><span>500+</span></div>
+  </div>
+
+  <footer>
+    <div>Source: Open-Meteo Air Quality API (CAMS model) — YOUR_TOWN (YOUR_LAT, YOUR_LON)</div>
+    <div id="fetched">fetched: —</div>
+  </footer>
+</div>
+
+<script>
+  var YOUR_LAT = 0.0, YOUR_LON = 0.0; // CONFIG: set to your home's latitude/longitude
+  function fit() {
+    var s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    document.getElementById('stage').style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+  }
+  function tick() {
+    var d = new Date(), h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    document.getElementById('clock').textContent = h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  function fmtClock(d) {
+    var h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    return h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  // g1/g2/g3 = the full-screen atmospheric gradient for that category — the page IS the reading.
+  var CATS = [
+    { max: 50,  name: 'Good', seg: 1, g: ['#0B3D2E', '#146B4A', '#1E7A56'], head: 'Air is good', guide: 'Air is clean. Windows open, walk the dogs, no caveats. This is the normal day here.' },
+    { max: 100, name: 'Moderate', seg: 2, g: ['#3D2E07', '#7A5A10', '#96711A'], head: 'Air is moderate', guide: 'Fine for almost everyone. Unusually sensitive people may notice it on a long, hard run — otherwise, carry on.' },
+    { max: 150, name: 'Unhealthy for sensitive groups', seg: 3, g: ['#3A1503', '#8A3410', '#B4531F'], head: 'Air is turning — sensitive groups take care', guide: 'Sensitive groups (asthma, heart or lung conditions, kids, older adults) should shorten hard outdoor exertion. Close windows if you can smell smoke. Check on the purifier filter.' },
+    { max: 200, name: 'Unhealthy', seg: 4, g: ['#38060D', '#7A1220', '#9F1D2E'], head: 'Air is unhealthy', guide: 'Everyone may feel it. Move exercise indoors, keep windows closed, run the purifier, and wear a well-fitted N95 for necessary trips outside.' },
+    { max: 300, name: 'Very unhealthy', seg: 5, g: ['#2A0838', '#5E1766', '#7C2D8B'], head: 'Air is very unhealthy', guide: 'Stay indoors with the purifier running. Avoid all outdoor exertion. N95 outside, even briefly. Keep the dogs\' outings short.' },
+    { max: 9999, name: 'Hazardous', seg: 6, g: ['#26060A', '#571C24', '#7A2833'], head: 'Air is hazardous', guide: 'Emergency conditions. Everyone stays in, purifier on high, seal obvious drafts, N95 for any unavoidable trip out. Follow county alerts, not just this screen.' }
+  ];
+  function render(aqi, pm25, pm10, specimen) {
+    if (specimen) document.getElementById('specimen').className = 'on';
+    var cat = CATS.filter(function(c) { return aqi <= c.max; })[0];
+    document.body.style.background = 'linear-gradient(165deg, ' + cat.g.join(', ') + ')';
+    document.getElementById('haze').className = aqi > 100 ? 'on' : '';
+    document.getElementById('aqinum').textContent = Math.round(aqi);
+    document.getElementById('aqicat').textContent = cat.name;
+    document.getElementById('headline').textContent = cat.head + (specimen ? ' (specimen)' : '');
+    document.getElementById('pm25').textContent = 'PM2.5 ' + (+pm25).toFixed(1) + ' µg/m³';
+    document.getElementById('pm10').textContent = 'PM10 ' + (+pm10).toFixed(1) + ' µg/m³';
+    document.getElementById('guidance').textContent = cat.guide;
+    for (var i = 1; i <= 6; i++) {
+      var el = document.getElementById('sc' + i);
+      el.className = 'seg' + (i === cat.seg ? ' on' : '');
+    }
+    document.getElementById('fetched').textContent = 'fetched: ' + fmtClock(new Date()) + (specimen ? ' · SPECIMEN (fetch failed)' : ' · live from Open-Meteo');
+  }
+  function load() {
+    var url = 'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + YOUR_LAT + '&longitude=' + YOUR_LON + '&current=us_aqi,pm2_5,pm10&timezone=auto';
+    fetch(url).then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function(j) {
+      if (j.current.us_aqi === null || j.current.us_aqi === undefined) throw new Error('no aqi');
+      render(j.current.us_aqi, j.current.pm2_5, j.current.pm10, false);
+    }).catch(function() { render(42, 10.1, 14.0, true); });
+  }
+  window.addEventListener('resize', fit);
+  fit(); tick(); setInterval(tick, 15000); setInterval(fit, 30000);
+  load();
+</script>
+</body>
+</html>

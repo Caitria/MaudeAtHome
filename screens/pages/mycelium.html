@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Living Mycelium</title>
+<!--
+  LIVING MYCELIUM: one fungal organism that "grows" from the day's house signals,
+  rendered full-screen on canvas for the cast displays.
+
+  HOW IT WORKS
+  - The mature network is generated deterministically from the DATE (seeded
+    PRNG, YYYY-MM-DD): every load on the same day grows the same organism.
+    On load, the day's growth replays compressed into ~2 minutes, then the
+    network settles into a slow pulse (light travelling along the hyphae,
+    fruiting bodies breathing, spore motes drifting).
+  - Real signals, fetched at load, set the organism's VIGOR (not its skeleton,
+    so the organism is recognisably itself all day):
+      aircraft overhead (adsb.lol via the caster Pi :8081/adsb) -> luminous density
+        of the network + how many fruiting bodies light up;
+      rain (Open-Meteo, YOUR_LAT/YOUR_LON) -> faster pulses + rain shimmer motes;
+      temperature -> pulse speed (warm = livelier).
+    If the fetches fail, it grows anyway from the date seed alone and the
+    caption says "offline growth".
+  - QA hooks: ?t=150 jumps the growth clock to 150 s (fully grown);
+    density can be forced with ?aircraft=29&temp=67&rain=0.
+  PERFORMANCE: the network is pre-rendered progressively into an offscreen
+  canvas (no shadowBlur); per frame we blit two canvases and draw a few dozen
+  sprite images. Segment count is hard-capped for the Chromecast webview.
+
+  AESTHETIC: ("blooms and movement,
+  glow, purples and cyans"): the palette moved from teal-green to a
+  bioluminescent ultraviolet reef-forest — violet/magenta old growth, bright
+  cyan young tips, cyan-white pulses, violet fruiting bodies with cyan
+  cores, on a deep violet/indigo ground. BLOOMS added: layered-petal
+  flowers (pre-rendered gradient sprites, no per-frame shadowBlur) that
+  slowly unfurl at the ends of major branches, breathe open, close, and
+  re-open elsewhere — 4–8 visible at a time. MOVEMENT: the whole web now
+  sways on a slow underwater current (the pre-rendered layer is blitted in
+  horizontal bands, each offset by a sine of time and depth; all sprites
+  ride the same current), pulses are more frequent, spores drift cyan.
+  WEATHER SOURCE: local weather is Open-Meteo for YOUR_LAT/YOUR_LON.
+  (Deliberately not a home weather station: the point is a zero-maintenance
+  public feed.)
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #05030D; }
+  body { font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif; color: #EFEAFF; }
+
+  #stage { position: fixed; left: 50%; top: 50%; width: 1920px; height: 1080px;
+           transform-origin: center center; overflow: hidden;
+           background:
+             radial-gradient(1200px 700px at 22% 12%, rgba(88,42,180,.42), rgba(88,42,180,0) 62%),
+             radial-gradient(1000px 760px at 82% 88%, rgba(24,80,140,.30), rgba(24,80,140,0) 60%),
+             radial-gradient(700px 500px at 62% 30%, rgba(140,40,170,.22), rgba(140,40,170,0) 65%),
+             linear-gradient(158deg, #150A30 0%, #0A0619 52%, #05030F 100%); }
+  #cv { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  .vignette { position: absolute; inset: 0; pointer-events: none;
+           background: radial-gradient(120% 90% at 50% 46%, rgba(0,0,0,0) 58%, rgba(0,0,0,.5) 100%); }
+
+  /* Caption — same translucent-overlay grammar as the other delight pages. */
+  .card { position: absolute; left: 44px; bottom: 40px; max-width: 660px;
+          background: rgba(16, 8, 38, .48); border: 1px solid rgba(190, 160, 255, .24);
+          border-radius: 20px; padding: 19px 24px 16px;
+          backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2); }
+  .kicker { font-size: 18px; letter-spacing: .26em; text-transform: uppercase; font-weight: 700; opacity: .94; }
+  .kicker .dot { color: #67E8F9; }
+  .fact { font-size: 21.5px; line-height: 1.35; font-weight: 520; margin-top: 8px; opacity: .92; }
+  .meta { font-size: 16.5px; opacity: .72; margin-top: 9px; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+  .credit { position: absolute; right: 44px; bottom: 44px; font-size: 16px; opacity: .62;
+            text-align: right; line-height: 1.5; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv" width="1920" height="1080"></canvas>
+  <div class="vignette"></div>
+
+  <div class="card">
+    <div class="kicker"><span class="dot">●</span>&nbsp; Living Mycelium</div>
+    <div class="fact">One organism, grown from today's house signals — seeded by the date, fed by the sky over YOUR_TOWN.</div>
+    <div class="meta" id="meta">germinating from today's signals…</div>
+  </div>
+
+  <div class="credit">signals: adsb.lol via castpi · Open-Meteo<br>one organism · new seed at midnight</div>
+</div>
+
+<script>
+  var YOUR_LAT = 0.0, YOUR_LON = 0.0; // CONFIG: set to your home's latitude/longitude
+(function () {
+  'use strict';
+  var W = 1920, H = 1080;
+  var params = new URLSearchParams(location.search);
+
+  /* ---------- deterministic PRNG, seeded by the calendar date ---------- */
+  function hashStr(s) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  var now = new Date();
+  var dateKey = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
+  var rng = mulberry32(hashStr('mycelium:' + dateKey));
+
+  /* ---------- signals (real, fetched at load; honest fallbacks) ---------- */
+  var sig = { aircraft: null, tempF: null, precipMm: null, live: false };
+  function fetchWithTimeout(url, ms) {
+    return Promise.race([
+      fetch(url, { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }),
+      new Promise(function (_, rej) { setTimeout(function () { rej(new Error('timeout')); }, ms); })
+    ]);
+  }
+  function getSignals() {
+    if (params.has('aircraft') || params.has('temp') || params.has('rain')) {
+      sig.aircraft = params.has('aircraft') ? +params.get('aircraft') : null;
+      sig.tempF = params.has('temp') ? +params.get('temp') : null;
+      sig.precipMm = params.has('rain') ? +params.get('rain') : null;
+      sig.live = true;
+      return Promise.resolve();
+    }
+    var jobs = [];
+    jobs.push(fetchWithTimeout('http://CASTPI_LAN_IP:8081/adsb', 4500).then(function (j) {
+      var n = null;
+      if (j && Array.isArray(j.ac)) n = j.ac.length;
+      else if (j && Array.isArray(j.aircraft)) n = j.aircraft.length;
+      else if (j && typeof j.total === 'number') n = j.total;
+      if (n !== null) { sig.aircraft = n; sig.live = true; }
+    }).catch(function () {}));
+    jobs.push(fetchWithTimeout('https://api.open-meteo.com/v1/forecast?latitude=' + YOUR_LAT + '&longitude=' + YOUR_LON + '&current=temperature_2m,precipitation&temperature_unit=fahrenheit&timezone=auto', 4500).then(function (j) {
+      if (j && j.current) {
+        if (typeof j.current.temperature_2m === 'number') sig.tempF = Math.round(j.current.temperature_2m);
+        if (typeof j.current.precipitation === 'number') sig.precipMm = j.current.precipitation;
+        sig.live = true;
+      }
+    }).catch(function () {}));
+    return Promise.all(jobs);
+  }
+
+  /* ---------- vigor mapping: signals -> how alive the organism looks ---------- */
+  function vigor() {
+    var a = sig.aircraft;
+    var density = (a === null) ? 0.72 : Math.min(1, Math.max(0.45, 0.45 + (Math.min(a, 38) / 38) * 0.55));
+    var fruit = (a === null) ? 0.55 : Math.min(1, Math.max(0.25, 0.25 + (Math.min(a, 30) / 30) * 0.75));
+    var wet = (sig.precipMm !== null && sig.precipMm > 0.05);
+    var warmth = (sig.tempF === null) ? 0.5 : Math.min(1, Math.max(0, (sig.tempF - 40) / 50));
+    var hour = new Date().getHours();
+    var night = (hour >= 18 || hour < 6);
+    return {
+      density: density, fruit: fruit, wet: wet,
+      pulseSpeed: 26 * (wet ? 1.5 : 1) * (0.85 + 0.35 * warmth),
+      glow: night ? 1.18 : 1.0
+    };
+  }
+
+  /* ---------- network generation (deterministic; the day's skeleton) ---------- */
+  var MAXSEG = 11000;
+  var segments = [];   // {x1,y1,x2,y2,w,hue,rank} rank = growth order fraction
+  var paths = [];      // polylines for light pulses (gen <= 2 hyphae)
+  var nodes = [];      // fruiting bodies {x,y,r,rank,phase}
+  var bloomSites = []; // candidate bloom anchors: ends of major branches
+  var hubs = [];
+
+  function generate() {
+    // hubs: spread out with a minimum separation
+    var tries = 0;
+    while (hubs.length < 5 && tries < 300) {
+      tries++;
+      var hx = 200 + rng() * (W - 400), hy = 180 + rng() * (H - 360);
+      var ok = true;
+      for (var i = 0; i < hubs.length; i++) {
+        var dx = hubs[i].x - hx, dy = hubs[i].y - hy;
+        if (dx * dx + dy * dy < 400 * 400) { ok = false; break; }
+      }
+      if (ok) hubs.push({ x: hx, y: hy });
+    }
+    // rhizomorph cords between near hubs — the organism's thick early bundles
+    for (var a = 0; a < hubs.length; a++) for (var b = a + 1; b < hubs.length; b++) {
+      var ddx = hubs[b].x - hubs[a].x, ddy = hubs[b].y - hubs[a].y;
+      var dist = Math.sqrt(ddx * ddx + ddy * ddy);
+      if (dist < 760) {
+        var mx = (hubs[a].x + hubs[b].x) / 2 + (rng() - 0.5) * 130;
+        var my = (hubs[a].y + hubs[b].y) / 2 + (rng() - 0.5) * 130;
+        var steps = 16, px = hubs[a].x, py = hubs[a].y;
+        for (var s = 1; s <= steps; s++) {
+          var t = s / steps, u = 1 - t;
+          var qx = u * u * hubs[a].x + 2 * u * t * mx + t * t * hubs[b].x;
+          var qy = u * u * hubs[a].y + 2 * u * t * my + t * t * hubs[b].y;
+          segments.push({ x1: px, y1: py, x2: qx, y2: qy, w: 4.6, hue: 266, cord: true });
+          px = qx; py = qy;
+        }
+      }
+    }
+    // hyphae: queue of growing tips; parents generate before children
+    var queue = [];
+    hubs.forEach(function (h) {
+      var n = 7 + Math.floor(rng() * 3);
+      for (var i = 0; i < n; i++) {
+        queue.push({
+          x: h.x, y: h.y, ang: (i / n) * Math.PI * 2 + rng() * 0.7,
+          gen: 0, w: 3.1, budget: 560 + rng() * 340, pts: [[h.x, h.y]]
+        });
+      }
+    });
+    var nodeEvery = 0, qHead = 0;
+    while (qHead < queue.length && segments.length < MAXSEG) {
+      var tip = queue[qHead++];
+      var stepsLeft = Math.floor(tip.budget / 10);
+      var px = tip.x, py = tip.y, ang = tip.ang;
+      for (var st = 0; st < stepsLeft; st++) {
+        if (segments.length >= MAXSEG) break;
+        var stepLen = 7 + rng() * 6;
+        ang += (rng() - 0.5) * 0.46;
+        var nx = px + Math.cos(ang) * stepLen, ny = py + Math.sin(ang) * stepLen;
+        if (nx < 26 || nx > W - 26 || ny < 26 || ny > H - 26) break;
+        var tFrac = st / stepsLeft;
+        var w = Math.max(0.45, tip.w * (1 - tFrac * 0.5));
+        // palette: old growth violet -> magenta-purple -> bright cyan young tips
+        var segHue = tip.gen <= 3 ? 262 + tip.gen * 11 : (tip.gen === 4 ? 316 : 192);
+        segments.push({ x1: px, y1: py, x2: nx, y2: ny, w: w, hue: segHue + rng() * 8, cord: false });
+        if (tip.gen <= 2) tip.pts.push([nx, ny]);
+        // fruiting body candidates along the way and at nodes
+        nodeEvery++;
+        if (nodeEvery % 53 === 0 && nodes.length < 150) {
+          nodes.push({ x: nx, y: ny, r: 2.6 + rng() * 4.2, rank: rng(), phase: rng() * Math.PI * 2 });
+        }
+        // branching
+        if (rng() < 0.048 && tip.gen < 5 && segments.length < MAXSEG) {
+          queue.push({
+            x: nx, y: ny, ang: ang + (rng() < 0.5 ? -1 : 1) * (0.35 + rng() * 0.55),
+            gen: tip.gen + 1, w: tip.w * 0.72, budget: tip.budget * (0.34 + rng() * 0.25), pts: [[nx, ny]]
+          });
+        }
+        px = nx; py = ny;
+      }
+      if (tip.gen <= 2 && tip.pts.length > 6) paths.push(tip.pts);
+      // bloom anchor: the end of a major branch (gen 1-4), away from the edges
+      if (tip.gen >= 1 && tip.gen <= 4 && tip.pts.length > 8 &&
+          px > 110 && px < W - 110 && py > 110 && py < H - 110 && rng() < 0.55) {
+        bloomSites.push({ x: px, y: py, ang: ang });
+      }
+      // tip fruiting body
+      if (rng() < 0.6 && nodes.length < 150) {
+        nodes.push({ x: px, y: py, r: 3 + rng() * 4.6, rank: rng(), phase: rng() * Math.PI * 2 });
+      }
+    }
+    var total = segments.length;
+    segments.forEach(function (s, i) { s.rank = total ? i / total : 0; });
+  }
+
+  /* ---------- pre-rendered layers ---------- */
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var growthCv = document.createElement('canvas'); growthCv.width = W; growthCv.height = H;
+  var gtx = growthCv.getContext('2d');
+  var drawn = 0;
+
+  function drawSegment(g, s, luminous) {
+    var l = luminous ? 58 : 30;
+    // halo pass
+    g.strokeStyle = luminous ? 'rgba(130,60,230,0.10)' : 'rgba(140,120,220,0.05)';
+    g.lineWidth = s.w * 3.1;
+    g.beginPath(); g.moveTo(s.x1, s.y1); g.lineTo(s.x2, s.y2); g.stroke();
+    // core pass
+    g.strokeStyle = 'hsla(' + s.hue + ',82%,' + l + '%,' + (luminous ? 0.85 : 0.20) + ')';
+    g.lineWidth = s.w;
+    g.beginPath(); g.moveTo(s.x1, s.y1); g.lineTo(s.x2, s.y2); g.stroke();
+  }
+
+  // glow sprite (for fruiting bodies + travelling pulses)
+  function makeSprite(inner, outer) {
+    var c = document.createElement('canvas'); c.width = c.height = 96;
+    var x = c.getContext('2d');
+    var gr = x.createRadialGradient(48, 48, 2, 48, 48, 48);
+    gr.addColorStop(0, inner); gr.addColorStop(0.35, outer); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = gr; x.fillRect(0, 0, 96, 96);
+    return c;
+  }
+  var violetSprite = makeSprite('rgba(246,205,255,1)', 'rgba(196,80,255,0.34)'); // fruiting glow
+  var pulseSprite = makeSprite('rgba(238,255,255,1)', 'rgba(80,205,255,0.30)');  // cyan-white pulses
+
+  /* ---------- blooms: pre-rendered layered-petal sprites ----------
+     Two layers per variant (outer ring + inner ring), drawn once into
+     offscreen canvases; the unfurl is faked per frame by scaling and
+     rotating the layers at different rates — no per-frame shadowBlur. */
+  function petalPath(x, len, wid) {
+    x.beginPath();
+    x.moveTo(0, 0);
+    x.bezierCurveTo(wid, -len * 0.35, wid * 0.55, -len * 0.85, 0, -len);
+    x.bezierCurveTo(-wid * 0.55, -len * 0.85, -wid, -len * 0.35, 0, 0);
+    x.closePath();
+  }
+  function makePetalLayer(size, petals, lenF, widF, rot, stops) {
+    var c = document.createElement('canvas'); c.width = c.height = size;
+    var x = c.getContext('2d');
+    x.translate(size / 2, size / 2);
+    for (var i = 0; i < petals; i++) {
+      x.save();
+      x.rotate(rot + (i / petals) * Math.PI * 2);
+      var len = size * 0.5 * lenF, wid = size * 0.5 * widF;
+      var gr = x.createRadialGradient(0, 0, 2, 0, -len * 0.55, len * 1.05);
+      stops.forEach(function (s) { gr.addColorStop(s[0], s[1]); });
+      x.fillStyle = gr;
+      petalPath(x, len, wid); x.fill();
+      x.strokeStyle = 'rgba(255,255,255,0.20)'; x.lineWidth = 1.4;
+      petalPath(x, len, wid); x.stroke();
+      x.restore();
+    }
+    return c;
+  }
+  var BLOOM_SIZE = 320;
+  var bloomVariants = [
+    { // violet
+      outer: makePetalLayer(BLOOM_SIZE, 8, 0.96, 0.40, 0, [[0, 'rgba(88,28,175,0.95)'], [0.45, 'rgba(168,85,247,0.90)'], [1, 'rgba(233,213,255,0.95)']]),
+      inner: makePetalLayer(BLOOM_SIZE, 6, 0.60, 0.34, 0.5, [[0, 'rgba(109,40,217,0.95)'], [0.5, 'rgba(192,132,252,0.92)'], [1, 'rgba(245,208,254,0.96)']])
+    },
+    { // magenta
+      outer: makePetalLayer(BLOOM_SIZE, 8, 0.96, 0.40, 0.3, [[0, 'rgba(134,25,143,0.95)'], [0.5, 'rgba(217,70,239,0.90)'], [1, 'rgba(250,208,253,0.95)']]),
+      inner: makePetalLayer(BLOOM_SIZE, 6, 0.60, 0.34, 0.8, [[0, 'rgba(162,28,175,0.95)'], [0.5, 'rgba(232,121,249,0.92)'], [1, 'rgba(253,224,255,0.96)']])
+    },
+    { // cyan-kissed violet
+      outer: makePetalLayer(BLOOM_SIZE, 8, 0.96, 0.40, 0.15, [[0, 'rgba(76,29,149,0.95)'], [0.55, 'rgba(139,92,246,0.92)'], [1, 'rgba(165,243,252,0.95)']]),
+      inner: makePetalLayer(BLOOM_SIZE, 6, 0.60, 0.34, 0.65, [[0, 'rgba(91,33,182,0.95)'], [0.5, 'rgba(167,139,250,0.92)'], [1, 'rgba(207,250,254,0.96)']])
+    }
+  ];
+  var blooms = [];
+  function initBlooms() {
+    var picked = [];
+    for (var i = 0; i < bloomSites.length && picked.length < 10; i++) {
+      var s = bloomSites[i], ok = true;
+      for (var j = 0; j < picked.length; j++) {
+        var dx = picked[j].x - s.x, dy = picked[j].y - s.y;
+        if (dx * dx + dy * dy < 245 * 245) { ok = false; break; }
+      }
+      if (ok) picked.push(s);
+    }
+    picked.forEach(function (s, k) {
+      blooms.push({
+        x: s.x + Math.cos(s.ang) * 14, y: s.y + Math.sin(s.ang) * 14,
+        rot: rng() * Math.PI * 2, phase: rng() * Math.PI * 2,
+        size: 68 + rng() * 68,                 // 68–136 px across
+        variant: bloomVariants[k % bloomVariants.length],
+        start: 36 + k * 13 + rng() * 6         // staggered first openings
+      });
+    });
+  }
+  // bloom lifecycle: 30 s unfurl -> hold ~120 s breathing -> 30 s close -> rest; period 290 s
+  function bloomOpenness(b, elapsed) {
+    if (elapsed < b.start) return 0;
+    var lt = (elapsed - b.start) % 290;
+    function ease(u) { return u * u * (3 - 2 * u); }
+    if (lt < 30) return ease(lt / 30);
+    if (lt < 150) return 1;
+    if (lt < 180) return 1 - ease((lt - 150) / 30);
+    return 0;
+  }
+
+  /* ---------- pulses + motes ---------- */
+  var pulses = [], motes = [], shimmers = [];
+  function initLife(v) {
+    // precompute path lengths
+    var pathData = paths.map(function (pts) {
+      var cum = [0];
+      for (var i = 1; i < pts.length; i++) {
+        var dx = pts[i][0] - pts[i - 1][0], dy = pts[i][1] - pts[i - 1][1];
+        cum.push(cum[i - 1] + Math.sqrt(dx * dx + dy * dy));
+      }
+      return { pts: pts, cum: cum, len: cum[cum.length - 1] };
+    }).filter(function (p) { return p.len > 140; });
+    for (var i = 0; i < 34; i++) {
+      pulses.push({
+        path: pathData[Math.floor(rng() * pathData.length)],
+        d: rng() * 800, speed: v.pulseSpeed * (0.7 + rng() * 0.7),
+        size: 12 + rng() * 18, phase: rng() * Math.PI * 2
+      });
+    }
+    for (var m = 0; m < 56; m++) {
+      motes.push({ x: rng() * W, y: rng() * H, r: 0.8 + rng() * 1.9, ph: rng() * Math.PI * 2, sp: 2.5 + rng() * 5 });
+    }
+    if (v.wet) {
+      for (var s2 = 0; s2 < 26; s2++) {
+        shimmers.push({ x: rng() * W, y: rng() * H, len: 14 + rng() * 26, sp: 60 + rng() * 80, ph: rng() * Math.PI * 2 });
+      }
+    }
+    return pathData;
+  }
+  function pathPoint(pd, d) {
+    d = ((d % pd.len) + pd.len) % pd.len;
+    var lo = 0, hi = pd.cum.length - 1;
+    while (lo < hi - 1) { var mid = (lo + hi) >> 1; if (pd.cum[mid] <= d) lo = mid; else hi = mid; }
+    var segLen = pd.cum[hi] - pd.cum[lo] || 1;
+    var t = (d - pd.cum[lo]) / segLen;
+    return [pd.pts[lo][0] + (pd.pts[hi][0] - pd.pts[lo][0]) * t,
+            pd.pts[lo][1] + (pd.pts[hi][1] - pd.pts[lo][1]) * t];
+  }
+
+  /* ---------- caption ---------- */
+  function setCaption() {
+    var el = document.getElementById('meta');
+    var dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    if (!sig.live) {
+      el.textContent = 'offline growth · ' + dateStr;
+      return;
+    }
+    var parts = [];
+    if (sig.aircraft !== null) parts.push(sig.aircraft + (sig.aircraft === 1 ? ' aircraft' : ' aircraft') + ' overhead');
+    if (sig.tempF !== null) parts.push(sig.tempF + '°');
+    if (sig.precipMm !== null) parts.push(sig.precipMm > 0.05 ? ('rain ' + sig.precipMm.toFixed(1) + ' mm') : 'dry');
+    el.textContent = parts.join(' · ') + ' · ' + dateStr;
+  }
+
+  /* ---------- main loop ---------- */
+  var GROW_SECONDS = 120;
+  var startAt = null, lastFrame = 0, vig = null;
+
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    if (ts - lastFrame < 33) return; // ~30 fps ceiling for the cast webview
+    var dt = Math.min(0.1, (ts - lastFrame) / 1000 || 0.033);
+    lastFrame = ts;
+    if (startAt === null) startAt = ts;
+    var elapsed = (ts - startAt) / 1000 + (+(params.get('t') || 0));
+    var x = Math.min(1, elapsed / GROW_SECONDS);
+    var progress = Math.pow(x, 0.85);
+
+    // progressive growth into the offscreen layer
+    var target = Math.floor(progress * segments.length);
+    if (target > drawn) {
+      gtx.lineCap = 'round';
+      while (drawn < target) {
+        var s = segments[drawn];
+        drawSegment(gtx, s, s.rank <= vig.density);
+        drawn++;
+      }
+    }
+
+    var t = ts / 1000;
+    // the whole web rides a slow underwater current: the pre-rendered layer
+    // is blitted in horizontal bands, each offset by a sine of time + depth;
+    // every sprite below applies the same swayX() so all layers move together.
+    function swayX(y) { return Math.sin(t * 0.12 + y * 0.0035) * 3.4; }
+    ctx.clearRect(0, 0, W, H);
+    var bandH = 135;
+    for (var by = 0; by < H; by += bandH) {
+      var off = swayX(by + bandH / 2);
+      ctx.drawImage(growthCv, 0, by, W, bandH, off - 4, by, W + 8, bandH);
+    }
+
+    // fruiting bodies: luminous violet glow, cyan core (dim violet buds when dormant)
+    nodes.forEach(function (n) {
+      var nx = n.x + swayX(n.y);
+      if (n.rank <= vig.fruit * progress + 0.001 && progress > 0.25) {
+        var pulse = 0.72 + 0.28 * Math.sin(t * 0.9 + n.phase);
+        var sz = n.r * 9 * pulse * vig.glow;
+        ctx.globalAlpha = 0.85;
+        ctx.drawImage(violetSprite, nx - sz / 2, n.y - sz / 2, sz, sz);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = 'rgba(165,243,252,0.95)';
+        ctx.beginPath(); ctx.arc(nx, n.y, n.r * 0.52, 0, Math.PI * 2); ctx.fill();
+      } else if (progress > 0.5) {
+        ctx.fillStyle = 'rgba(196,141,255,0.22)';
+        ctx.beginPath(); ctx.arc(nx, n.y, n.r * 0.34, 0, Math.PI * 2); ctx.fill();
+      }
+    });
+
+    // blooms: slow unfurl -> breathing hold -> slow close (layered sprites)
+    if (progress > 0.3) {
+      blooms.forEach(function (b) {
+        var o = bloomOpenness(b, elapsed);
+        if (o <= 0.01) return;
+        var bx = b.x + swayX(b.y);
+        var breathe = 1 + 0.03 * Math.sin(t * 0.5 + b.phase);
+        ctx.save();
+        ctx.translate(bx, b.y);
+        ctx.rotate(b.rot + Math.sin(t * 0.22 + b.phase) * 0.07);
+        ctx.globalAlpha = 0.25 + 0.75 * o;
+        var os = b.size * (0.55 + 0.45 * o) * breathe;
+        ctx.drawImage(b.variant.outer, -os / 2, -os / 2, os, os);
+        ctx.rotate(0.5 + (1 - o) * 0.6);
+        var isz = b.size * (0.20 + 0.55 * o) * breathe;
+        ctx.drawImage(b.variant.inner, -isz / 2, -isz / 2, isz, isz);
+        ctx.rotate(-0.5 - (1 - o) * 0.6);
+        ctx.globalAlpha = o;
+        var gs = b.size * 0.55 * (0.8 + 0.2 * Math.sin(t * 0.8 + b.phase));
+        ctx.drawImage(pulseSprite, -gs / 2, -gs / 2, gs, gs);
+        ctx.fillStyle = 'rgba(207,250,254,0.95)';
+        ctx.beginPath(); ctx.arc(0, 0, Math.max(1.6, b.size * 0.045), 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    // pulses of light travelling the hyphae (cyan-white, riding the current)
+    if (progress > 0.15) {
+      pulses.forEach(function (p) {
+        p.d += p.speed * dt;
+        var pt = pathPoint(p.path, p.d);
+        var px2 = pt[0] + swayX(pt[1]);
+        var a = 0.5 + 0.4 * Math.sin(t * 1.7 + p.phase);
+        ctx.globalAlpha = Math.max(0.12, a) * 0.8;
+        var sz = p.size * 2.2;
+        ctx.drawImage(pulseSprite, px2 - sz / 2, pt[1] - sz / 2, sz, sz);
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    // spore motes drifting up on the same current (cyan)
+    motes.forEach(function (m) {
+      m.y -= m.sp * dt; m.x += Math.sin(t * 0.4 + m.ph) * 0.14;
+      if (m.y < -6) { m.y = H + 6; m.x = rng() * W; }
+      var a = 0.05 + 0.13 * (0.5 + 0.5 * Math.sin(t * 0.7 + m.ph));
+      ctx.fillStyle = 'rgba(178,242,255,' + a.toFixed(3) + ')';
+      ctx.beginPath(); ctx.arc(m.x + swayX(m.y), m.y, m.r, 0, Math.PI * 2); ctx.fill();
+    });
+
+    // rain shimmer (only when it's actually wet out)
+    if (vig.wet) {
+      shimmers.forEach(function (s) {
+        s.y += s.sp * dt; s.x += s.sp * dt * 0.22;
+        if (s.y > H + 30) { s.y = -30; s.x = rng() * W; }
+        var a = 0.05 + 0.05 * Math.sin(t * 2 + s.ph);
+        ctx.strokeStyle = 'rgba(170,220,255,' + Math.max(0.02, a).toFixed(3) + ')';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x - s.len * 0.22, s.y + s.len); ctx.stroke();
+      });
+    }
+  }
+
+  /* ---------- fit + go ---------- */
+  function fit() {
+    var s = Math.min(window.innerWidth / W, window.innerHeight / H);
+    document.getElementById('stage').style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  getSignals().then(function () {
+    vig = vigor();
+    setCaption();
+    generate();
+    initBlooms();
+    initLife(vig);
+    requestAnimationFrame(frame);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Floorplan — HOUSE_NAME — Glow</title>
+<!--
+  FLOORPLAN "GLOW": an earlier flat all-one-tone version was unreadable,
+  so — deep-plum dark ground, every room its own jewel tint with a glowing
+  border, lit rooms glow hard, bulbs amber against the purple. (Peach glass
+  stays the skin for the household-information pages, NOT for this one.)
+  LAYOUT: two plates side by side with vertical relationships aligned
+  (studio over bedroom, bath over bath). The layout below is a SAMPLE house —
+  an open-plan downstairs (kitchen + living), hall to bathroom and bedroom;
+  upstairs a loft, hall, bath, and studio. Rooms are data (the ROOMS array),
+  so rearranging the plan to your house is a small edit.
+  Device states are a BAKED SNAPSHOT from a Home Assistant read, labelled
+  on the page; a companion snapshot job re-renders them on a cadence
+  (see docs/OPERATIONS.md).
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body { font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif; color: #EDE9FF; }
+  #bg { position: fixed; inset: 0; background:
+      radial-gradient(900px 520px at 12% -10%, rgba(124,58,237,.28), rgba(124,58,237,0) 60%),
+      radial-gradient(760px 520px at 95% 110%, rgba(192,38,211,.16), rgba(192,38,211,0) 60%),
+      radial-gradient(600px 420px at 60% 45%, rgba(67,56,202,.14), rgba(67,56,202,0) 65%),
+      linear-gradient(160deg, #120826 0%, #0A0618 55%, #070412 100%); }
+  #stage { position: fixed; left: 50%; top: 50%; width: 1280px; height: 800px; transform-origin: center center; padding: 18px 26px 12px; }
+
+  header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; }
+  .kicker { font-size: 14px; letter-spacing: .26em; text-transform: uppercase; color: #B79CFF; font-weight: 700; margin-bottom: 4px; }
+  h1 { font-size: 34px; font-weight: 680; line-height: 1.05; white-space: nowrap; color: #F4F1FF; text-shadow: 0 0 22px rgba(150,110,255,.35); }
+  .sub { font-size: 15.5px; color: #A79BD6; margin-top: 4px; }
+  #clock { font-size: 50px; font-weight: 600; line-height: .95; font-variant-numeric: tabular-nums; color: #EDE9FF; white-space: nowrap; text-shadow: 0 0 16px rgba(150,110,255,.3); }
+  .clocksub { font-size: 14px; color: #A79BD6; margin-top: 3px; text-align: right; }
+
+  .plates { display: flex; gap: 16px; }
+  .plate { position: relative; height: 560px; border-radius: 20px; background: rgba(20, 12, 44, .55);
+    border: 1px solid rgba(150, 120, 255, .22); box-shadow: inset 0 0 60px rgba(88, 40, 180, .12), 0 14px 34px rgba(0,0,0,.4); }
+  #plateDown { width: 756px; flex-shrink: 0; }
+  #plateUp { flex: 1; }
+  .ptitle { position: absolute; top: 10px; left: 16px; z-index: 6; font-size: 13.5px; letter-spacing: .2em;
+    text-transform: uppercase; font-weight: 800; color: #C4B0FF; text-shadow: 0 0 12px rgba(150,110,255,.5); }
+  .pnote { position: absolute; top: 10px; right: 14px; z-index: 6; font-size: 12.5px; color: #8F83BC; }
+
+  .room { position: absolute; border-radius: 15px; border: 2px solid var(--edge); background: var(--fill);
+    box-shadow: 0 0 18px var(--glow), inset 0 0 26px var(--inner); padding: 26px 11px 8px; overflow: hidden; }
+  .room .rname { font-size: 18.5px; font-weight: 750; line-height: 1.1; color: var(--name); text-shadow: 0 0 14px var(--glow); letter-spacing: .02em; }
+  .room .rnote { font-size: 12.5px; color: #B6ABE0; margin: 2px 0 6px; line-height: 1.25; }
+  .room.lit { box-shadow: 0 0 34px var(--glow), 0 0 64px var(--glow), inset 0 0 44px var(--inner); border-color: var(--name); }
+  .room.small .rname { font-size: 15px; }
+  .room.vert .rname { writing-mode: vertical-rl; font-size: 14px; letter-spacing: .14em; }
+  .room.small { padding-top: 22px; }
+
+  .dev { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; margin: 0 4px 5px 0;
+    border-radius: 999px; font-size: 13.5px; font-weight: 640; color: #D9D2F5;
+    background: rgba(10, 6, 26, .55); border: 1px solid rgba(170, 150, 255, .35); white-space: nowrap; }
+  .dev .dot { width: 9px; height: 9px; border-radius: 50%; background: #6E6395; flex-shrink: 0; }
+  .dev.on { color: #FFE9B8; border-color: rgba(255, 196, 86, .75); }
+  .dev.on .dot { background: #FFC454; box-shadow: 0 0 10px rgba(255,196,86,.95), 0 0 20px rgba(255,196,86,.5); }
+  .dev.offline { color: #FFC4B0; border-style: dashed; border-color: rgba(255, 122, 92, .6); }
+  .dev.offline .dot { background: #FF7A5C; box-shadow: 0 0 8px rgba(255,122,92,.7); }
+  .dev.tv { color: #C8F6FF; border-color: rgba(103, 232, 249, .6); }
+  .dev.tv .dot { background: #67E8F9; box-shadow: 0 0 10px rgba(103,232,249,.9); }
+  .dev.gear { color: #CDBFFF; border-color: rgba(167, 139, 250, .55); }
+  .dev.gear .dot { background: #A78BFA; box-shadow: 0 0 9px rgba(167,139,250,.9); }
+  .dev.me { background: #EDE9FF; color: #241047; border-color: #EDE9FF; font-weight: 750; }
+  .dev.me .dot { background: #7C3AED; box-shadow: none; }
+  .corner { position: absolute; top: 8px; right: 8px; }
+
+  .strip { display: flex; gap: 14px; margin-top: 14px; align-items: stretch; }
+  .scard { border-radius: 16px; background: rgba(20, 12, 44, .55); border: 1px solid rgba(150,120,255,.22);
+    padding: 10px 16px; font-size: 14.5px; line-height: 1.35; color: #CFC7F2; }
+  .scard b { color: #F4F1FF; }
+  .scard.warn { border-color: rgba(255, 180, 84, .45); }
+  .legend { display: flex; gap: 13px; flex-wrap: wrap; align-items: center; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  footer { display: flex; justify-content: space-between; margin-top: 10px; font-size: 13px; color: rgba(167,155,214,.8); }
+</style>
+</head>
+<body>
+<div id="bg"></div>
+<div id="stage">
+  <header>
+    <div>
+      <div class="kicker">Floorplan · HOUSE_NAME</div>
+      <h1>The house, glowing</h1>
+      <div class="sub">Your layout: open kitchen + living downstairs, hall to bath &amp; bedroom · loft, hall, bath &amp; studio up</div>
+    </div>
+    <div>
+      <div id="clock">--:--</div>
+      <div class="clocksub">Sample snapshot · YOUR_TOWN</div>
+    </div>
+  </header>
+
+  <div class="plates">
+    <div class="plate" id="plateDown"><div class="ptitle">Downstairs</div><div class="pnote">the vacuum's floor</div></div>
+    <div class="plate" id="plateUp"><div class="ptitle">Upstairs</div><div class="pnote">studio over bedroom · bath over bath</div></div>
+  </div>
+
+  <div class="strip">
+    <div class="scard"><b>🤖 Robot vacuum: offline</b> — sample snapshot state. Docked downstairs.</div>
+    <div class="scard warn"><b>13 lights awaiting refresh</b> — vanity · hog · south · east · fan A/B/C · loft pair · Sengled pair · studio couch + strip.</div>
+    <div class="scard legend">
+      <span><span class="dot" style="background:#FFC454"></span>on</span>
+      <span><span class="dot" style="background:#6E6395"></span>off</span>
+      <span><span class="dot" style="background:#FF7A5C"></span>offline</span>
+      <span><span class="dot" style="background:#67E8F9"></span>TV</span>
+      <span><span class="dot" style="background:#A78BFA"></span>computers</span>
+    </div>
+  </div>
+
+  <footer>
+    <div>States from a Home Assistant snapshot (baked into this page — re-rendered by the snapshot job, see docs/OPERATIONS.md)</div>
+    <div id="vp">viewport: measuring…</div>
+  </footer>
+</div>
+
+<script>
+  var DEVICES = {
+    atrium_tv:   { label: 'TV — top corner', kind: 'tv', state: 'on', corner: true },
+    sunrise:     { label: 'Sunrise lights', kind: 'light', state: 'off' },
+    sunset:      { label: 'Sunset lights', kind: 'light', state: 'off' },
+    vacuum:       { label: 'Robot vacuum 🤖 offline', kind: 'vacuum', state: 'offline' },
+    server:      { label: 'Server · home server', kind: 'gear', state: 'gear' },
+    kitchen:     { label: 'Kitchen light', kind: 'light', state: 'off' },
+    kitchen_led: { label: 'Kitchen LED', kind: 'light', state: 'on' },
+    display:     { label: '★ This display', kind: 'me', state: 'on' },
+    hog:         { label: 'Hog lamp', kind: 'light', state: 'offline' },
+    desk:        { label: 'Desk light', kind: 'light', state: 'on' },
+    couch:       { label: 'Couch light', kind: 'light', state: 'offline' },
+    strip:       { label: 'Strip light', kind: 'light', state: 'offline' },
+    desktop:     { label: 'Desktop · computer', kind: 'gear', state: 'gear' },
+    loft_lamp:   { label: 'Loft lamp', kind: 'light', state: 'off' },
+    loft_light:  { label: 'Loft light', kind: 'light', state: 'offline' },
+    loft_hall:   { label: 'Loft hall', kind: 'light', state: 'offline' }
+  };
+  /* hue per room (jewel family on dark): edge border, fill tint, inner glow, name color */
+  var ROOMS = [
+    /* DOWNSTAIRS — kitchen + living open plan left; hall spine; bath over... bath top right, bedroom below it */
+    { plate: 'plateDown', name: 'LIVING · ATRIUM', note: 'open plan with the kitchen', x: 1.5, y: 8, w: 55, h: 60,
+      hue: ['rgba(167,139,250,.85)', 'rgba(109,40,217,.20)', 'rgba(139,92,246,.28)', '#D6BCFA'], devices: ['atrium_tv', 'sunrise', 'sunset', 'vacuum', 'server'] },
+    { plate: 'plateDown', name: 'KITCHEN', note: 'open plan — runs together with living', x: 1.5, y: 70, w: 55, h: 28,
+      hue: ['rgba(240,171,252,.8)', 'rgba(162,28,175,.18)', 'rgba(217,70,239,.22)', '#F5D0FE'], devices: ['kitchen', 'kitchen_led'] },
+    { plate: 'plateDown', name: 'HALL', note: '', small: true, vert: true, x: 58.5, y: 8, w: 11, h: 90,
+      hue: ['rgba(129,140,248,.6)', 'rgba(49,46,129,.25)', 'rgba(99,102,241,.18)', '#A5B4FC'], devices: [] },
+    { plate: 'plateDown', name: 'BATHROOM', note: '', small: true, x: 71.5, y: 8, w: 27, h: 36,
+      hue: ['rgba(103,232,249,.65)', 'rgba(14,116,144,.20)', 'rgba(34,211,238,.16)', '#A5F3FC'], devices: [] },
+    { plate: 'plateDown', name: 'BEDROOM', note: 'you are here — this display lives here', x: 71.5, y: 47, w: 27, h: 51,
+      hue: ['rgba(253,164,175,.75)', 'rgba(159,18,57,.18)', 'rgba(244,114,182,.20)', '#FECDD3'], devices: ['display', 'hog'] },
+    /* UPSTAIRS — loft big left; hall; bath above bath; studio above bedroom */
+    { plate: 'plateUp', name: 'LOFT', note: '', x: 2.5, y: 8, w: 43, h: 90,
+      hue: ['rgba(147,197,253,.75)', 'rgba(30,58,138,.22)', 'rgba(96,165,250,.20)', '#BFDBFE'], devices: ['loft_lamp', 'loft_light', 'loft_hall'] },
+    { plate: 'plateUp', name: 'HALL', note: '', small: true, vert: true, x: 47.5, y: 8, w: 10.5, h: 90,
+      hue: ['rgba(129,140,248,.6)', 'rgba(49,46,129,.25)', 'rgba(99,102,241,.18)', '#A5B4FC'], devices: [] },
+    { plate: 'plateUp', name: 'BATH', note: 'above downstairs bath', small: true, x: 60, y: 8, w: 37.5, h: 36,
+      hue: ['rgba(103,232,249,.65)', 'rgba(14,116,144,.20)', 'rgba(34,211,238,.16)', '#A5F3FC'], devices: [] },
+    { plate: 'plateUp', name: 'STUDIO', note: 'above the bedroom', x: 60, y: 47, w: 37.5, h: 51,
+      hue: ['rgba(240,171,252,.85)', 'rgba(134,25,143,.20)', 'rgba(232,121,249,.24)', '#F5D0FE'], devices: ['desk', 'couch', 'strip', 'desktop'] }
+  ];
+  ROOMS.forEach(function (r) {
+    var host = document.getElementById(r.plate);
+    var el = document.createElement('div');
+    var lit = r.devices.some(function (id) { var d = DEVICES[id]; return d && d.kind === 'light' && d.state === 'on'; });
+    el.className = 'room' + (lit ? ' lit' : '') + (r.small ? ' small' : '') + (r.vert ? ' vert' : '');
+    el.style.left = r.x + '%'; el.style.top = r.y + '%';
+    el.style.width = r.w + '%'; el.style.height = r.h + '%';
+    el.style.setProperty('--edge', r.hue[0]); el.style.setProperty('--fill', r.hue[1]);
+    el.style.setProperty('--inner', r.hue[2]); el.style.setProperty('--name', r.hue[3]);
+    el.style.setProperty('--glow', r.hue[2]);
+    var html = '<div class="rname">' + r.name + '</div>';
+    if (r.note) html += '<div class="rnote">' + r.note + '</div>';
+    r.devices.forEach(function (id) {
+      var d = DEVICES[id]; if (!d) return;
+      var cls = 'dev' + (d.state === 'on' && d.kind === 'light' ? ' on' : '') + (d.state === 'offline' ? ' offline' : '') +
+                (d.kind === 'tv' ? ' tv' : '') + (d.kind === 'me' ? ' me' : '') + (d.kind === 'gear' ? ' gear' : '') + (d.corner ? ' corner' : '');
+      html += '<span class="' + cls + '"><span class="dot"></span>' + (d.kind === 'light' ? '💡 ' : '') + d.label + '</span>';
+    });
+    el.innerHTML = html;
+    host.appendChild(el);
+  });
+
+  function fit() {
+    var s = Math.min(window.innerWidth / 1280, window.innerHeight / 800);
+    document.getElementById('stage').style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+    document.getElementById('vp').textContent = 'viewport: ' + window.innerWidth + ' × ' + window.innerHeight + ' · scale ' + s.toFixed(2);
+  }
+  function tick() {
+    var d = new Date(), h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    document.getElementById('clock').textContent = h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  window.addEventListener('resize', fit);
+  fit(); tick(); setInterval(tick, 15000); setInterval(fit, 30000);
+</script>
+</body>
+</html>

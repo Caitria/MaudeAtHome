@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Home Dashboard — The House, Lit + Pulse</title>
+<!--
+  HOME DASHBOARD — "The House, Lit + House Pulse": the glowing two-floor
+  plan is the hero, with an energy rail (sun arc + one diamond per solar
+  inverter) beside it. Two design rules worth stealing:
+   - States in this file are a BAKED SNAPSHOT from a Home Assistant read,
+     labelled on-page with their "as of" time. A companion snapshot job
+     re-renders the states block on a cadence (see docs/OPERATIONS.md);
+     the page never pretends baked data is live.
+   - Deliberately NOT shown: any live power figure the data can't support
+     (the rail claims only "producing · N/N inverters reporting"), and any
+     device class the smart-home platform doesn't actually expose.
+   - Broken devices appear ONCE, aggregated ("N lights awaiting refresh") —
+     an ambient screen must not become a maintenance nag.
+  The room/device data below is SAMPLE data in the original layout: replace
+  the DEVICES/ROOMS entries with your own house (see docs/OPERATIONS.md).
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body { font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif; color: #EDE9FF; }
+  #bg { position: fixed; inset: 0; background:
+      radial-gradient(1100px 620px at 10% -10%, rgba(124,58,237,.26), rgba(124,58,237,0) 60%),
+      radial-gradient(900px 600px at 98% 112%, rgba(192,38,211,.14), rgba(192,38,211,0) 60%),
+      linear-gradient(160deg, #120826 0%, #0A0618 55%, #070412 100%); }
+  #stage { position: fixed; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: center center; padding: 30px 40px 20px; }
+
+  header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px; }
+  .kicker { font-size: 16px; letter-spacing: .28em; text-transform: uppercase; color: #B79CFF; font-weight: 700; }
+  h1 { font-size: 40px; font-weight: 660; margin-top: 7px; color: #F4F1FF; text-shadow: 0 0 22px rgba(150,110,255,.3); }
+  h1 .gold { color: #FFC53D; text-shadow: 0 0 18px rgba(255,197,61,.45); }
+  #clock { font-size: 66px; font-weight: 600; line-height: .95; font-variant-numeric: tabular-nums; color: #EDE9FF; text-align: right; text-shadow: 0 0 16px rgba(150,110,255,.3); }
+  .clocksub { font-size: 16px; color: #A79BD6; text-align: right; margin-top: 5px; }
+
+  .main { display: flex; gap: 22px; }
+  .plates { width: 1252px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px; }
+  .plate { position: relative; border-radius: 20px; background: rgba(20,12,44,.55);
+    border: 1px solid rgba(150,120,255,.22); box-shadow: inset 0 0 60px rgba(88,40,180,.12), 0 14px 34px rgba(0,0,0,.4); }
+  #plateDown { height: 468px; }
+  #plateUp { height: 302px; }
+  .ptitle { position: absolute; top: 11px; left: 18px; z-index: 6; font-size: 15px; letter-spacing: .2em;
+    text-transform: uppercase; font-weight: 800; color: #C4B0FF; text-shadow: 0 0 12px rgba(150,110,255,.5); }
+  .pnote { position: absolute; top: 11px; right: 16px; z-index: 6; font-size: 14px; color: #8F83BC; }
+
+  .room { position: absolute; border-radius: 15px; border: 2px solid var(--edge); background: var(--fill);
+    box-shadow: 0 0 18px var(--glow), inset 0 0 26px var(--inner); padding: 30px 12px 8px; overflow: hidden; }
+  .room .rname { font-size: 21px; font-weight: 750; color: var(--name); text-shadow: 0 0 14px var(--glow); }
+  .room .rnote { font-size: 14px; color: #B6ABE0; margin: 2px 0 7px; }
+  .room.lit { box-shadow: 0 0 34px var(--glow), 0 0 64px var(--glow), inset 0 0 44px var(--inner); border-color: var(--name); }
+  .room.small .rname { font-size: 16.5px; }
+  .room.small { padding-top: 25px; }
+  .room.vert .rname { writing-mode: vertical-rl; font-size: 15px; letter-spacing: .14em; }
+
+  .dev { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; margin: 0 5px 6px 0;
+    border-radius: 999px; font-size: 15px; font-weight: 640; color: #D9D2F5;
+    background: rgba(10,6,26,.55); border: 1px solid rgba(170,150,255,.35); white-space: nowrap; }
+  .dev .dot { width: 9px; height: 9px; border-radius: 50%; background: #6E6395; flex-shrink: 0; }
+  .dev.on { color: #FFE9B8; border-color: rgba(255,196,86,.75); }
+  .dev.on .dot { background: #FFC454; box-shadow: 0 0 10px rgba(255,196,86,.95), 0 0 20px rgba(255,196,86,.5); }
+  .dev.offline { color: #FFC4B0; border-style: dashed; border-color: rgba(255,122,92,.6); }
+  .dev.offline .dot { background: #FF7A5C; box-shadow: 0 0 8px rgba(255,122,92,.7); }
+  .dev.tv { color: #C8F6FF; border-color: rgba(103,232,249,.6); }
+  .dev.tv .dot { background: #67E8F9; box-shadow: 0 0 10px rgba(103,232,249,.9); }
+  .dev.gear { color: #CDBFFF; border-color: rgba(167,139,250,.55); }
+  .dev.gear .dot { background: #A78BFA; box-shadow: 0 0 9px rgba(167,139,250,.9); }
+  .dev.me { background: #EDE9FF; color: #241047; border-color: #EDE9FF; font-weight: 750; }
+  .dev.me .dot { background: #7C3AED; box-shadow: none; }
+  .corner { position: absolute; top: 9px; right: 9px; }
+
+  .rail { flex: 1; display: flex; flex-direction: column; gap: 16px; }
+  .card { border-radius: 20px; background: rgba(20,12,44,.55); border: 1px solid rgba(150,120,255,.22);
+    box-shadow: inset 0 0 50px rgba(88,40,180,.10), 0 14px 34px rgba(0,0,0,.35); padding: 20px 24px; }
+  .card h2 { font-size: 15px; letter-spacing: .24em; text-transform: uppercase; font-weight: 800; color: #C4B0FF; margin-bottom: 10px; }
+  .card h2.gold { color: #FFC53D; }
+  .bigline { font-size: 25px; font-weight: 660; color: #F4F1FF; line-height: 1.3; }
+  .row { font-size: 19.5px; line-height: 1.42; color: #CFC7F2; margin: 3px 0; }
+  .row b { color: #F4F1FF; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .diamonds { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+  .diamonds i { width: 15px; height: 15px; background: #FFC53D; transform: rotate(45deg); border-radius: 3px;
+    box-shadow: 0 0 9px rgba(255,197,61,.65); }
+  .arcwrap { position: relative; }
+  .arclabels { display: flex; justify-content: space-between; font-size: 15px; color: #A79BD6; margin-top: -6px; }
+  .safe { color: #8FF5C8; }
+  footer { display: flex; justify-content: space-between; margin-top: 16px; font-size: 14.5px; color: rgba(167,155,214,.8); }
+</style>
+</head>
+<body>
+<div id="bg"></div>
+<div id="stage">
+  <header>
+    <div>
+      <div class="kicker">Home Dashboard · HOUSE_NAME</div>
+      <h1>The house, lit — <span class="gold">solar up</span>, two lights on, one robot asleep</h1>
+    </div>
+    <div>
+      <div id="clock">--:--</div>
+      <div class="clocksub">Sample snapshot · YOUR_TOWN</div>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="plates">
+      <div class="plate" id="plateDown"><div class="ptitle">Downstairs</div><div class="pnote">the vacuum's floor</div></div>
+      <div class="plate" id="plateUp"><div class="ptitle">Upstairs</div><div class="pnote">studio over bedroom · bath over bath</div></div>
+    </div>
+
+    <div class="rail">
+      <div class="card">
+        <h2 class="gold">☀ Sun &amp; Solar — House Pulse</h2>
+        <div class="arcwrap">
+          <svg width="100%" height="118" viewBox="0 0 500 118" preserveAspectRatio="none">
+            <path d="M 14 108 A 236 96 0 0 1 486 108" fill="none" stroke="rgba(255,197,61,.35)" stroke-width="2.5" stroke-dasharray="5 6"/>
+            <circle id="sundot" cx="250" cy="14" r="11" fill="#FFC53D" style="filter: drop-shadow(0 0 12px rgba(255,197,61,.9))"/>
+          </svg>
+          <div class="arclabels"><span>↑ 7:29 AM</span><span id="sunstate">afternoon sun</span><span>↓ 6:09 PM</span></div>
+        </div>
+        <div class="bigline" style="margin-top:8px">Solar is producing — <span class="mono">25 / 25</span> inverters reporting</div>
+        <div class="diamonds" id="diamonds"></div>
+      </div>
+
+      <div class="card">
+        <h2>🌦 Outside — YOUR_TOWN</h2>
+        <div class="row"><b>67° and sunny</b> · tonight low <b>47°</b>, rain late (60%)</div>
+        <div class="row">Tomorrow: <b>66°</b>, partly cloudy · sunset today <b>6:09 PM</b></div>
+      </div>
+
+      <div class="card">
+        <h2>🛡 Safety</h2>
+        <div class="row"><span class="safe"><b>First Alert: clear</b></span> — smoke &amp; CO · battery <span class="mono">78%</span></div>
+      </div>
+
+      <div class="card">
+        <h2>⚠ Needs attention — once, quietly</h2>
+        <div class="row">🤖 Robot vacuum offline · entry sensor offline · <span class="mono">2</span> batteries low</div>
+        <div class="row"><span class="mono">13</span> lights awaiting refresh — one line, by design</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div>House states read from Home Assistant · sample snapshot (baked into this page — re-rendered by the snapshot job, see docs/OPERATIONS.md)</div>
+    <div>Dashboard v2 — The House, Lit + House Pulse</div>
+  </footer>
+</div>
+
+<script>
+  var DEVICES = {
+    atrium_tv:   { label: 'TV — top corner', kind: 'tv', state: 'on', corner: true },
+    sunrise:     { label: 'Sunrise lights', kind: 'light', state: 'off' },
+    sunset:      { label: 'Sunset lights', kind: 'light', state: 'off' },
+    vacuum:       { label: 'Robot vacuum 🤖 offline', kind: 'vacuum', state: 'offline' },
+    server:      { label: 'Server · home server', kind: 'gear', state: 'gear' },
+    kitchen:     { label: 'Kitchen light', kind: 'light', state: 'off' },
+    kitchen_led: { label: 'Kitchen LED', kind: 'light', state: 'on' },
+    display:     { label: 'Bedroom display', kind: 'gear', state: 'gear' },
+    hog:         { label: 'Hog lamp', kind: 'light', state: 'offline' },
+    desk:        { label: 'Desk light', kind: 'light', state: 'on' },
+    couch:       { label: 'Couch light', kind: 'light', state: 'offline' },
+    strip:       { label: 'Strip light', kind: 'light', state: 'offline' },
+    desktop:     { label: 'Desktop · computer', kind: 'gear', state: 'gear' },
+    loft_lamp:   { label: 'Loft lamp', kind: 'light', state: 'off' },
+    loft_light:  { label: 'Loft light', kind: 'light', state: 'offline' },
+    loft_hall:   { label: 'Loft hall', kind: 'light', state: 'offline' }
+  };
+  var ROOMS = [
+    { plate: 'plateDown', name: 'LIVING · ATRIUM', note: 'open plan with the kitchen', x: 1.2, y: 9, w: 55, h: 58,
+      hue: ['rgba(167,139,250,.85)', 'rgba(109,40,217,.20)', 'rgba(139,92,246,.28)', '#D6BCFA'], devices: ['atrium_tv', 'sunrise', 'sunset', 'vacuum', 'server'] },
+    { plate: 'plateDown', name: 'KITCHEN', note: 'runs together with living', x: 1.2, y: 69.5, w: 55, h: 28.5,
+      hue: ['rgba(240,171,252,.8)', 'rgba(162,28,175,.18)', 'rgba(217,70,239,.22)', '#F5D0FE'], devices: ['kitchen', 'kitchen_led'] },
+    { plate: 'plateDown', name: 'HALL', note: '', small: true, vert: true, x: 58, y: 9, w: 10, h: 89,
+      hue: ['rgba(129,140,248,.6)', 'rgba(49,46,129,.25)', 'rgba(99,102,241,.18)', '#A5B4FC'], devices: [] },
+    { plate: 'plateDown', name: 'BATHROOM', note: '', small: true, x: 70, y: 9, w: 28.5, h: 36,
+      hue: ['rgba(103,232,249,.65)', 'rgba(14,116,144,.20)', 'rgba(34,211,238,.16)', '#A5F3FC'], devices: [] },
+    { plate: 'plateDown', name: 'BEDROOM', note: '', x: 70, y: 48, w: 28.5, h: 50,
+      hue: ['rgba(253,164,175,.75)', 'rgba(159,18,57,.18)', 'rgba(244,114,182,.20)', '#FECDD3'], devices: ['display', 'hog'] },
+    { plate: 'plateUp', name: 'LOFT', note: '', x: 1.2, y: 13, w: 40, h: 82,
+      hue: ['rgba(147,197,253,.75)', 'rgba(30,58,138,.22)', 'rgba(96,165,250,.20)', '#BFDBFE'], devices: ['loft_lamp', 'loft_light', 'loft_hall'] },
+    { plate: 'plateUp', name: 'HALL', note: '', small: true, vert: true, x: 43, y: 13, w: 9, h: 82,
+      hue: ['rgba(129,140,248,.6)', 'rgba(49,46,129,.25)', 'rgba(99,102,241,.18)', '#A5B4FC'], devices: [] },
+    { plate: 'plateUp', name: 'BATH', note: 'above downstairs bath', small: true, x: 54, y: 13, w: 20, h: 82,
+      hue: ['rgba(103,232,249,.65)', 'rgba(14,116,144,.20)', 'rgba(34,211,238,.16)', '#A5F3FC'], devices: [] },
+    { plate: 'plateUp', name: 'STUDIO', note: 'above the bedroom', x: 76, y: 13, w: 22.5, h: 82,
+      hue: ['rgba(240,171,252,.85)', 'rgba(134,25,143,.20)', 'rgba(232,121,249,.24)', '#F5D0FE'], devices: ['desk', 'couch', 'strip', 'desktop'] }
+  ];
+  ROOMS.forEach(function (r) {
+    var host = document.getElementById(r.plate);
+    var el = document.createElement('div');
+    var lit = r.devices.some(function (id) { var d = DEVICES[id]; return d && d.kind === 'light' && d.state === 'on'; });
+    el.className = 'room' + (lit ? ' lit' : '') + (r.small ? ' small' : '') + (r.vert ? ' vert' : '');
+    el.style.left = r.x + '%'; el.style.top = r.y + '%';
+    el.style.width = r.w + '%'; el.style.height = r.h + '%';
+    el.style.setProperty('--edge', r.hue[0]); el.style.setProperty('--fill', r.hue[1]);
+    el.style.setProperty('--inner', r.hue[2]); el.style.setProperty('--name', r.hue[3]);
+    el.style.setProperty('--glow', r.hue[2]);
+    var html = '<div class="rname">' + r.name + '</div>';
+    if (r.note) html += '<div class="rnote">' + r.note + '</div>';
+    r.devices.forEach(function (id) {
+      var d = DEVICES[id]; if (!d) return;
+      var cls = 'dev' + (d.state === 'on' && d.kind === 'light' ? ' on' : '') + (d.state === 'offline' ? ' offline' : '') +
+                (d.kind === 'tv' ? ' tv' : '') + (d.kind === 'gear' ? ' gear' : '') + (d.corner ? ' corner' : '');
+      html += '<span class="' + cls + '"><span class="dot"></span>' + (d.kind === 'light' ? '💡 ' : '') + d.label + '</span>';
+    });
+    el.innerHTML = html;
+    host.appendChild(el);
+  });
+
+  // 25 inverter diamonds — one per real Enphase inverter, all reporting today.
+  document.getElementById('diamonds').innerHTML = Array(25).fill('<i></i>').join('');
+
+  // Sun position on the arc: sunrise/sunset constants for the snapshot
+  // date (the snapshot renderer recomputes them daily from Open-Meteo).
+  function sunTick() {
+    var now = new Date(), mins = now.getHours() * 60 + now.getMinutes();
+    var rise = 7 * 60 + 29, set = 18 * 60 + 9;
+    var f = Math.max(0, Math.min(1, (mins - rise) / (set - rise)));
+    var ang = Math.PI * (1 - f); // pi..0 along the arc
+    var cx = 250 + 236 * Math.cos(ang), cy = 108 - 96 * Math.sin(ang);
+    var dot = document.getElementById('sundot');
+    dot.setAttribute('cx', cx.toFixed(1)); dot.setAttribute('cy', cy.toFixed(1));
+    document.getElementById('sunstate').textContent =
+      mins < rise ? 'before sunrise' : mins > set ? 'sun set at 6:09 PM' :
+      f < .33 ? 'morning sun' : f < .66 ? 'afternoon sun' : 'golden hour — sets 6:09 PM';
+    var h = now.getHours(), m = now.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    document.getElementById('clock').textContent = h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  function fit() {
+    var s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    document.getElementById('stage').style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+  }
+  window.addEventListener('resize', fit);
+  fit(); sunTick(); setInterval(sunTick, 30000); setInterval(fit, 30000);
+</script>
+</body>
+</html>

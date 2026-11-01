@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dream Mode — The Pleasure-Dome</title>
+<!--
+  DREAM MODE — "THE PLEASURE-DOME". Two ideas fused: the dream BUILDS
+  something, and dream POEMS surface in it. The poem fragments below are
+  verified public-domain texts — do not edit wording from memory; check
+  any replacement against a public-domain source before adding it.
+
+  THE PIECE — one night-long arc in five acts, driven by the local clock:
+    19:00–20:30  I. The Shore        empty shore, moon, water, opening poem
+    20:30–22:30  II. Foundations     bases land on every plot
+    22:30–01:30  III. The Rising     towers + the dome climb, windows kindle
+    01:30–05:30  IV. The Inhabited City  complete; poems continue; flicker
+    05:30–07:00  V. The Dissolution  city un-builds in reverse; Prospero last
+    07:00–19:00  daytime: The Shore, quiet, "the city returns at nightfall"
+  At 07:00 the Morning Paper briefing takes the screen (Pi schedule).
+
+  DETERMINISM: the city (plots, heights, neighbour-rule targets, build order,
+  window patterns) is generated from a seeded PRNG keyed to the NIGHT DATE
+  (the date of the 19:00 that starts the night). How much of the city exists
+  is a pure function of the clock: each act maps to a visible-segment count
+  (foundations grows 0 -> all base courses; rising grows bases -> complete;
+  dissolution shrinks complete -> 0 in reverse build order). A page loaded
+  at 23:40 therefore arrives at the correct half-risen city; deliveries and
+  poems animate on top of that schedule without owning it.
+
+  FLIGHTS CARRY THE PARTS: the page polls the house ADS-B proxy
+  (http://CASTPI_LAN_IP:8081/adsb, adsb.lol via the caster Pi) every 60 s. When a
+  segment's scheduled moment arrives while the page watches, a light streak
+  descends from the sky to deliver it. The caption states the real aircraft
+  count feeding the night; if the feed fails, deliveries continue unguided
+  and the caption says so. Counts are real; streak timing is the schedule's.
+
+  POEMS: one fragment every ~4 min and at each act change, LARGE serif over
+  the scene (Direction 2 typography: the poem is an event, never a caption),
+  held ~30 s. Sequence follows the night: Coleridge's decree on the Shore,
+  "I would build that dome in air" during The Rising, de la Mare / Yeats /
+  Li Bai mid-night, and the FINAL fragment of the night is Prospero's
+  dissolution speech (bank #6), held longest, before the city finishes
+  un-building.
+
+  QA PARAMS: ?act=shore|foundations|rising|inhabited|dissolution locks an
+  act (progress fixed mid-act unless fast); ?fast=1 sweeps the locked act's
+  progress 0->1 over ~60 s (in clock mode it runs night time at ~1 night-
+  minute per real second); ?poem=N (0-based index into the POEMS array in
+  the script) pins poem N on screen; ?t=SECONDS pretends that many extra
+  seconds have passed on the clock.
+
+  PERFORMANCE: single canvas, pre-rendered glow sprites, no per-frame
+  shadowBlur, segment cap ~140, ~30 fps cap, scale-to-fit 1920x1080 ->
+  1280x800. Chrome (caption/credit) pixel-shifts every 5 min (burn-in).
+  Moon: synodic approximation computed in-page, as in Tonight's Sky.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #04050F; }
+  body { font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif; color: #E9EAFF; }
+  #stage { position: fixed; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: center center; overflow: hidden;
+    background: linear-gradient(180deg, #070826 0%, #0A0930 52%, #0D0B33 68%, #05061A 100%); }
+  canvas#scene { position: absolute; inset: 0; }
+
+  /* The poem — an event, not a caption. Large book serif, darkness around it. */
+  #poem { position: absolute; left: 0; right: 0; top: 120px; text-align: center; opacity: 0; pointer-events: none;
+    transition: opacity 5s ease-in-out; padding: 0 220px; }
+  #poem.on { opacity: 1; }
+  #poem .line { font-family: Georgia, "Times New Roman", "Nimbus Roman", serif; font-size: 56px; line-height: 1.38;
+    color: #F7F1DE; text-shadow: 0 2px 26px rgba(0,0,0,.85), 0 0 44px rgba(20,16,60,.9); font-style: italic; }
+  #poem .attr { margin-top: 26px; font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; font-style: normal;
+    font-size: 21px; letter-spacing: .34em; text-transform: uppercase; color: rgba(216,205,255,.78);
+    text-shadow: 0 1px 14px rgba(0,0,0,.8); }
+
+  /* House-style chrome: translucent caption bottom-left, credit bottom-right. */
+  #chrome { position: absolute; inset: 0; pointer-events: none; }
+  #caption { position: absolute; left: 44px; bottom: 34px; max-width: 1050px; padding: 14px 20px;
+    background: rgba(10, 8, 32, .42); border: 1px solid rgba(150, 140, 255, .16); border-radius: 14px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  #caption .k { font-size: 15px; letter-spacing: .3em; text-transform: uppercase; color: #B9A8FF; font-weight: 700; }
+  #caption .l { font-size: 20px; color: rgba(233,234,255,.92); margin-top: 5px; line-height: 1.35; }
+  #credit { position: absolute; right: 44px; bottom: 34px; text-align: right; font-size: 15.5px; line-height: 1.5;
+    color: rgba(190, 200, 240, .55); text-shadow: 0 1px 10px rgba(0,0,0,.8); max-width: 560px; }
+  #wordmark { position: absolute; left: 46px; top: 36px; font-size: 15px; letter-spacing: .34em;
+    text-transform: uppercase; color: rgba(200, 190, 255, .5); font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="scene" width="1920" height="1080"></canvas>
+  <div id="wordmark">Dream Mode</div>
+  <div id="poem"><div id="poemlines"></div><div class="attr" id="poemattr"></div></div>
+  <div id="chrome">
+    <div id="caption"><div class="k">Dream Mode — The Pleasure-Dome</div><div class="l" id="captionline">The shore is dark; the city is a rumour.</div></div>
+    <div id="credit">Poems: public domain, verified — Coleridge · Shakespeare · Blake · Keats ·<br>Tennyson · Rossetti · Dickinson · Yeats · Poe · de la Mare · Frost · Li Bai</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var W = 1920, H = 1080, SHORE = 812; // shore line y; water below
+  var params = new URLSearchParams(location.search);
+  var FAST = params.get('fast') === '1';
+  var LOCK_ACT = params.get('act');
+  var PIN_POEM = params.has('poem') ? parseInt(params.get('poem'), 10) : -1;
+  var T_OFF = params.has('t') ? parseFloat(params.get('t')) : 0;
+
+  // ---------- seeded PRNG (mulberry32) ----------
+  function hashStr(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+  function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+  // ---------- night clock ----------
+  // Night starts 19:00 local. Returns {key, elapsedMin} or {day:true}.
+  function nightState(now) {
+    var h = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+    var start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 19, 0, 0);
+    if (h >= 19) return { key: start.toDateString(), elapsed: (now - start) / 60000, day: false };
+    if (h < 7) { var y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 19, 0, 0); return { key: y.toDateString(), elapsed: (now - y) / 60000, day: false }; }
+    return { key: start.toDateString(), elapsed: 0, day: true };
+  }
+  var ACTS = [
+    { id: 'shore',       name: 'I · The Shore',           from: 0,   to: 90 },
+    { id: 'foundations', name: 'II · Foundations',        from: 90,  to: 210 },
+    { id: 'rising',      name: 'III · The Rising',        from: 210, to: 390 },
+    { id: 'inhabited',   name: 'IV · The Inhabited City', from: 390, to: 630 },
+    { id: 'dissolution', name: 'V · The Dissolution',     from: 630, to: 720 }
+  ];
+  function actAt(elapsed, day) {
+    if (day) return { act: ACTS[0], frac: 0.35 };
+    for (var i = 0; i < ACTS.length; i++) { var a = ACTS[i]; if (elapsed >= a.from && elapsed < a.to) return { act: a, frac: (elapsed - a.from) / (a.to - a.from) }; }
+    return { act: ACTS[4], frac: 1 };
+  }
+
+  // ---------- the poem bank — EXACT texts from the verified brief (§4) ----------
+  var POEMS = [
+    { n: 1,  lines: ['In Xanadu did Kubla Khan', 'A stately pleasure-dome decree:', 'Where Alph, the sacred river, ran', 'Through caverns measureless to man', 'Down to a sunless sea.'], attr: 'Samuel Taylor Coleridge — Kubla Khan, 1816' },
+    { n: 2,  lines: ['I would build that dome in air,', 'That sunny dome! those caves of ice!'], attr: 'Samuel Taylor Coleridge — Kubla Khan, 1816' },
+    { n: 3,  lines: ['Once a dream did weave a shade', "O'er my angel-guarded bed"], attr: 'William Blake — A Dream, 1789' },
+    { n: 4,  lines: ['Sweet dreams, form a shade', "O'er my lovely infant's head!"], attr: 'William Blake — A Cradle Song, 1789' },
+    { n: 5,  lines: ['Was it a vision, or a waking dream?', 'Fled is that music:—do I wake or sleep?'], attr: 'John Keats — Ode to a Nightingale, 1820' },
+    { n: 6,  lines: ["The cloud-capp'd towers, the gorgeous palaces,", 'The solemn temples, the great globe itself,', 'Yea, all which it inherit, shall dissolve…', 'We are such stuff', 'As dreams are made on, and our little life', 'Is rounded with a sleep.'], attr: 'William Shakespeare — The Tempest, 1611' },
+    { n: 7,  lines: ['Cool us to Shafts of Granite —', 'With just an Age — and Name —', 'And perhaps a phrase in Egyptian —', "It's prudenter — to dream —"], attr: 'Emily Dickinson — Poem 531, c. 1862' },
+    { n: 8,  lines: ['Now sleeps the crimson petal, now the white;', 'Nor waves the cypress in the palace walk;', 'Nor winks the gold fin in the porphyry font:', 'The fire-fly wakens: waken thou with me.'], attr: 'Alfred, Lord Tennyson — The Princess, 1847' },
+    { n: 9,  lines: ['The hope I dreamed of was a dream,', 'Was but a dream; and now I wake,', 'Exceeding comfortless, and worn, and old,', "For a dream's sake."], attr: 'Christina Rossetti — Mirage, 1862' },
+    { n: 10, lines: ['But I, being poor, have only my dreams;', 'I have spread my dreams under your feet;', 'Tread softly because you tread on my dreams.'], attr: 'W. B. Yeats — Aedh Wishes for the Cloths of Heaven, 1899' },
+    { n: 11, lines: ['Come away, O human child!', 'To the waters and the wild', 'With a faery, hand in hand,', "For the world's more full of weeping than you can understand."], attr: 'W. B. Yeats — The Stolen Child, 1889' },
+    { n: 12, lines: ['All that we see or seem', 'Is but a dream within a dream.'], attr: 'Edgar Allan Poe — A Dream Within a Dream, 1849' },
+    { n: 13, lines: ['Slowly, silently, now the moon', 'Walks the night in her silver shoon;', 'This way, and that, she peers, and sees', 'Silver fruit upon silver trees'], attr: 'Walter de la Mare — Silver, 1913' },
+    { n: 15, lines: ['Essence of winter sleep is on the night,', 'The scent of apples: I am drowsing off.'], attr: 'Robert Frost — After Apple-Picking, 1914' },
+    { n: 16, lines: ['I saw the moonlight before my couch,', 'And wondered if it were not the frost on the ground.', 'I raised my head and looked out on the mountain moon;', 'I bowed my head and thought of my far-off home.'], attr: 'Li Bai — On a Quiet Night, trans. Obata, 1922' },
+    { n: 17, lines: ['I sing, the wild moon wanders the sky.'], attr: 'Li Bai — Three with the Moon and His Shadow, trans. Obata, 1922' },
+    { n: 18, lines: ['Life is an immense dream. Why toil?', 'All day long I drowse with wine'], attr: 'Li Bai — Awakening from Sleep on a Spring Day, trans. Obata, 1922' }
+  ];
+  var BANK = {}; POEMS.forEach(function (p) { BANK[p.n] = p; });
+  // Night sequence by act (bank numbers). Prospero (#6) is last, in Dissolution.
+  var ACT_POEMS = {
+    shore: [1, 3], foundations: [11, 7], rising: [2, 10, 13],
+    inhabited: [8, 16, 5, 15, 17, 12, 18, 4], dissolution: [9, 6]
+  };
+
+  // ---------- city generation (deterministic per night) ----------
+  function buildCity(seedKey) {
+    var rnd = mulberry32(hashStr('pleasure-dome:' + seedKey));
+    var plots = [], x = 120;
+    var N = 15, prevTarget = 0;
+    for (var i = 0; i < N; i++) {
+      var isDome = (i === 7);
+      var w = isDome ? 168 : 78 + Math.floor(rnd() * 46);
+      // Neighbour rule: a plot beside a tall neighbour tends to grow tall too.
+      var base = 3 + rnd() * 5;
+      var target = Math.round(base + (prevTarget >= 6 ? rnd() * 3.2 : rnd() * 1.2));
+      if (isDome) target = 4;
+      target = Math.max(2, Math.min(10, target));
+      if (!isDome && rnd() < 0.14) target = Math.max(2, Math.round(target * 0.42)); // one or two stop early
+      var kind = isDome ? 'dome' : (rnd() < 0.3 ? 'spire' : 'tower');
+      var hue = ['gold', 'cyan', 'violet'][Math.floor(rnd() * 3)];
+      plots.push({ x: x, w: w, target: target, kind: kind, hue: hue, seed: rnd() });
+      prevTarget = target;
+      x += w + 14 + rnd() * 22;
+    }
+    // Centre the skyline in the stage.
+    var totalW = x - 120, shift = (W - totalW) / 2 - 120;
+    plots.forEach(function (p) { p.x += shift; });
+    // Segments: each plot has `target` courses; the dome plot's last course is the dome.
+    var segs = [];
+    plots.forEach(function (p, pi) {
+      for (var lv = 0; lv < p.target; lv++) {
+        segs.push({ plot: pi, level: lv, dome: p.kind === 'dome' && lv === p.target - 1, cap: (p.kind === 'spire' && lv === p.target - 1) });
+      }
+    });
+    // Global build order: course-major (all bases, then next courses), with a
+    // seeded centre-out bias inside each course — foundations everywhere first.
+    var order = segs.map(function (s, i) { return i; });
+    order.sort(function (a, b) {
+      var sa = segs[a], sb = segs[b];
+      if (sa.level !== sb.level) return sa.level - sb.level;
+      var da = Math.abs(sa.plot - 7) + plots[sa.plot].seed * 1.7;
+      var db = Math.abs(sb.plot - 7) + plots[sb.plot].seed * 1.7;
+      return da - db;
+    });
+    order.forEach(function (segIdx, rank) { segs[segIdx].rank = rank; });
+    var byRank = []; segs.forEach(function (s) { byRank[s.rank] = s; });
+    var baseCount = segs.filter(function (s) { return s.level <= 1; }).length;
+    // Windows: seeded per tower, only sensible once a tower is finished.
+    plots.forEach(function (p) {
+      p.win = [];
+      var cols = Math.max(2, Math.floor(p.w / 26)), rows = p.target * 2;
+      var wr = mulberry32(hashStr('win:' + seedKey + ':' + Math.round(p.x)));
+      for (var c = 0; c < cols; c++) for (var r = 0; r < rows; r++) if (wr() < 0.42) p.win.push({ c: c, r: r, ph: wr() * 6.28, hue: ['gold', 'cyan', 'violet'][Math.floor(wr() * 3)] });
+    });
+    return { plots: plots, segs: segs, byRank: byRank, total: segs.length, baseCount: baseCount };
+  }
+
+  function visibleCount(actId, frac, city) {
+    if (actId === 'shore') return 0;
+    if (actId === 'foundations') return Math.round(city.baseCount * frac);
+    if (actId === 'rising') return Math.round(city.baseCount + (city.total - city.baseCount) * frac);
+    if (actId === 'inhabited') return city.total;
+    if (actId === 'dissolution') return Math.round(city.total * (1 - frac));
+    return 0;
+  }
+
+  // ---------- moon (synodic approximation, as in Tonight's Sky) ----------
+  function moonPhase() {
+    var synodic = 29.53058867, ref = Date.UTC(2000, 0, 6, 18, 14) / 86400000, now = Date.now() / 86400000;
+    var age = ((now - ref) % synodic + synodic) % synodic;
+    return { age: age, illum: (1 - Math.cos(2 * Math.PI * age / synodic)) / 2 };
+  }
+
+  // ---------- canvas + pre-rendered glow sprites ----------
+  var cv = document.getElementById('scene'), ctx = cv.getContext('2d');
+  function glowSprite(rgb) {
+    var c = document.createElement('canvas'); c.width = c.height = 128;
+    var g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 2, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(' + rgb + ',1)'); gr.addColorStop(0.35, 'rgba(' + rgb + ',0.32)'); gr.addColorStop(1, 'rgba(' + rgb + ',0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128); return c;
+  }
+  var SPR = {
+    gold: glowSprite('255,205,110'), cyan: glowSprite('130,230,255'),
+    violet: glowSprite('180,140,255'), white: glowSprite('240,244,255')
+  };
+  var HUECOL = { gold: '#FFD98A', cyan: '#8FE8FF', violet: '#C9A6FF' };
+
+  var stars = [];
+  function buildStars(key) {
+    var rnd = mulberry32(hashStr('stars:' + key)); stars = [];
+    for (var i = 0; i < 300; i++) stars.push({ x: rnd() * W, y: rnd() * SHORE * 0.92, r: 0.4 + rnd() * 1.5, p: rnd() * 6.28, s: 0.3 + rnd() * 1.1 });
+  }
+
+  // ---------- state ----------
+  var state = {
+    nightKey: null, city: null, shownSegs: -1, landedAt: {}, streaks: [],
+    flights: null, flightsOk: false, actId: null, poemIdx: {},
+    lastPoemShownAt: 0, prosperoShown: false, startStamp: Date.now()
+  };
+
+  function currentActInfo() {
+    var now = new Date(Date.now() + T_OFF * 1000);
+    var ns = nightState(now);
+    if (LOCK_ACT) {
+      var a = ACTS.filter(function (x) { return x.id === LOCK_ACT; })[0] || ACTS[0];
+      var frac;
+      if (FAST) { var el = ((Date.now() - state.startStamp) / 1000) % 75; frac = Math.min(1, el / 60); }
+      else frac = a.id === 'inhabited' ? 1 : a.id === 'dissolution' ? 0.45 : a.id === 'shore' ? 0.35 : 0.6;
+      return { act: a, frac: frac, ns: ns, day: false, locked: true };
+    }
+    var elapsed = ns.elapsed;
+    if (FAST) elapsed += ((Date.now() - state.startStamp) / 1000) * (59 / 60); // ~1 night-minute per real second
+    var info = actAt(elapsed, ns.day);
+    return { act: info.act, frac: info.frac, ns: ns, day: ns.day, locked: false };
+  }
+
+  // ---------- flights ----------
+  function pollFlights() {
+    fetch('http://CASTPI_LAN_IP:8081/adsb').then(function (r) { return r.json(); }).then(function (j) {
+      state.flights = (j.ac || []).length; state.flightsOk = true;
+    }).catch(function () { state.flightsOk = false; });
+  }
+  pollFlights(); setInterval(pollFlights, 60000);
+
+  // ---------- poems ----------
+  var poemEl = document.getElementById('poem'), poemLines = document.getElementById('poemlines'), poemAttr = document.getElementById('poemattr');
+  var poemBusyUntil = 0;
+  function showPoem(p, holdMs) {
+    poemLines.innerHTML = p.lines.map(function (l) { return '<div class="line">' + l + '</div>'; }).join('');
+    poemAttr.textContent = p.attr;
+    poemEl.classList.add('on');
+    poemBusyUntil = Date.now() + (holdMs || 30000) + 6000; // hold + fade-out
+    setTimeout(function () { poemEl.classList.remove('on'); }, holdMs || 30000);
+    state.lastPoemShownAt = Date.now();
+  }
+  function poemScheduler(info) {
+    if (PIN_POEM >= 0) return; // QA pin handled at boot
+    var now = Date.now();
+    if (now < poemBusyUntil) return;
+    var actChanged = info.act.id !== state.actId;
+    if (!actChanged && state.lastPoemShownAt !== 0 && now - state.lastPoemShownAt <= 240000) return;
+    // Prospero (#6): reserved for Dissolution's second half; held longest;
+    // it is the last poem of the night.
+    if (info.act.id === 'dissolution' && info.frac >= 0.4 && !state.prosperoShown) {
+      state.prosperoShown = true; showPoem(BANK[6], 50000); return;
+    }
+    var list = ACT_POEMS[info.act.id] || [12];
+    var idx = state.poemIdx[info.act.id] || 0;
+    var bankNo = list[Math.min(idx, list.length - 1)];
+    if (info.act.id === 'dissolution' && bankNo === 6) bankNo = 14; // never early
+    state.poemIdx[info.act.id] = (idx + 1) % list.length;
+    showPoem(BANK[bankNo], 30000);
+  }
+
+  // ---------- drawing ----------
+  function fit() {
+    var s = Math.min(window.innerWidth / W, window.innerHeight / H);
+    document.getElementById('stage').style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+  }
+  window.addEventListener('resize', fit); fit(); setInterval(fit, 30000);
+
+  function drawMoon(age) {
+    var cx = 1636, cy = 172, r = 62, synodic = 29.53058867, p = age / synodic, waxing = p < 0.5, cosT = Math.cos(2 * Math.PI * p);
+    ctx.save(); ctx.globalAlpha = 0.5; ctx.drawImage(SPR.white, cx - 150, cy - 150, 300, 300); ctx.restore();
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+    ctx.fillStyle = '#131A36'; ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    var grad = ctx.createRadialGradient(cx - 20, cy - 20, 8, cx, cy, r);
+    grad.addColorStop(0, '#FFFDF2'); grad.addColorStop(0.75, '#F1EDD8'); grad.addColorStop(1, '#D8D1B6');
+    ctx.fillStyle = grad; ctx.beginPath();
+    if (waxing) ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 2, false); else ctx.arc(cx, cy, r, Math.PI / 2, Math.PI * 1.5, false);
+    ctx.ellipse(cx, cy, Math.abs(cosT) * r, r, 0, 0, Math.PI * 2, (waxing ? cosT < 0 : cosT > 0));
+    ctx.fill();
+    ctx.fillStyle = 'rgba(120,118,100,.16)';
+    [[-16, -20, 13], [10, -5, 9], [-4, 17, 11], [20, 22, 6]].forEach(function (m) { ctx.beginPath(); ctx.arc(cx + m[0], cy + m[1], m[2], 0, Math.PI * 2); ctx.fill(); });
+    ctx.restore();
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(220,228,255,.3)'; ctx.lineWidth = 1.2; ctx.stroke();
+  }
+
+  var SEG_H = 30;
+  function segRect(seg) {
+    var p = state.city.plots[seg.plot];
+    var rnd = mulberry32(hashStr('jit:' + state.nightKey + ':' + seg.plot + ':' + seg.level));
+    var jit = (rnd() - 0.5) * 3;
+    return { x: p.x + jit, y: SHORE - (seg.level + 1) * SEG_H, w: p.w - Math.abs(jit), h: SEG_H, plot: p };
+  }
+
+  function render(t) {
+    var info = currentActInfo();
+    if (state.nightKey !== info.ns.key || !state.city) {
+      state.nightKey = info.ns.key; state.city = buildCity(info.ns.key); buildStars(info.ns.key);
+      state.shownSegs = -1; state.landedAt = {};
+    }
+    var city = state.city;
+    var target = visibleCount(info.act.id, info.frac, city);
+    // Deliveries: segments newly crossing into existence get a streak + glow.
+    if (state.shownSegs >= 0 && target > state.shownSegs) {
+      for (var rank = state.shownSegs; rank < target; rank++) {
+        var seg = city.byRank[rank];
+        if (seg) {
+          var r0 = segRect(seg);
+          state.landedAt[seg.plot + ':' + seg.level] = t;
+          if (state.streaks.length < 6) state.streaks.push({ x0: r0.x + r0.w / 2 + (Math.random() - 0.5) * 900, y0: -30, x1: r0.x + r0.w / 2, y1: r0.y, t0: t, dur: 1400 });
+        }
+      }
+    }
+    state.shownSegs = target;
+
+    // --- sky ---
+    ctx.clearRect(0, 0, W, H);
+    var sky = ctx.createLinearGradient(0, 0, 0, SHORE);
+    sky.addColorStop(0, '#070826'); sky.addColorStop(0.6, '#0A0930'); sky.addColorStop(1, '#100C3A');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, SHORE);
+    stars.forEach(function (st) {
+      ctx.globalAlpha = 0.25 + 0.5 * (0.5 + 0.5 * Math.sin(t / 1000 * st.s + st.p));
+      ctx.fillStyle = '#E6EBFF'; ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+    drawMoon(moonPhase().age);
+    ctx.save(); ctx.globalAlpha = 0.16; ctx.drawImage(SPR.violet, W * 0.28 - 420, SHORE - 560, 840, 560); ctx.restore();
+
+    // --- water ---
+    var wat = ctx.createLinearGradient(0, SHORE, 0, H);
+    wat.addColorStop(0, '#0A1030'); wat.addColorStop(0.12, '#070B26'); wat.addColorStop(1, '#03040E');
+    ctx.fillStyle = wat; ctx.fillRect(0, SHORE, W, H - SHORE);
+    ctx.save(); ctx.globalAlpha = 0.10 + 0.04 * Math.sin(t / 900);
+    for (var gy = 0; gy < 9; gy++) { var gw = 26 + gy * 15 + Math.sin(t / 700 + gy) * 9; ctx.fillStyle = '#EDEBD2'; ctx.fillRect(1636 - gw / 2, SHORE + 14 + gy * 27, gw, 3); }
+    ctx.restore();
+
+    // --- the city and its reflection ---
+    var visSegs = city.segs.filter(function (s) { return s.rank < target; });
+    visSegs.forEach(function (seg) {
+      var r = segRect(seg);
+      var landed = state.landedAt[seg.plot + ':' + seg.level];
+      var fresh = landed !== undefined && (t - landed) < 2600;
+      if (seg.dome) {
+        // The pleasure-dome itself: a hemisphere crowning its base tower.
+        var dcx = r.x + r.w / 2, dbase = SHORE - seg.level * SEG_H;
+        ctx.fillStyle = '#191238';
+        ctx.beginPath(); ctx.arc(dcx, dbase, r.w / 2, Math.PI, 0); ctx.fill();
+        ctx.strokeStyle = 'rgba(190,160,255,.5)'; ctx.lineWidth = 1.6; ctx.stroke();
+        ctx.save(); ctx.globalAlpha = fresh ? 0.75 : 0.4; ctx.drawImage(SPR.violet, dcx - 90, dbase - 118, 180, 180); ctx.restore();
+        ctx.fillStyle = HUECOL.violet; ctx.beginPath(); ctx.arc(dcx, dbase - r.w / 2 - 6, 3.4, 0, Math.PI * 2); ctx.fill();
+        ctx.save(); ctx.globalAlpha = 0.13; ctx.fillStyle = '#8F7BD8';
+        ctx.beginPath(); ctx.ellipse(dcx + Math.sin(t / 800 + r.x) * 3, SHORE + 34, r.w / 2, 26, 0, 0, Math.PI); ctx.fill(); ctx.restore();
+        return;
+      }
+      ctx.fillStyle = seg.level === 0 ? '#120D2C' : '#171236';
+      ctx.fillRect(r.x, r.y, r.w, r.h - 2);
+      ctx.fillStyle = 'rgba(168,150,255,.28)'; ctx.fillRect(r.x, r.y, r.w, 1.6); // course line
+      if (seg.cap) { // spire
+        ctx.fillStyle = '#171236'; ctx.beginPath();
+        ctx.moveTo(r.x + 4, r.y); ctx.lineTo(r.x + r.w / 2, r.y - 34); ctx.lineTo(r.x + r.w - 4, r.y); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = HUECOL[r.plot.hue]; ctx.beginPath(); ctx.arc(r.x + r.w / 2, r.y - 38, 3, 0, Math.PI * 2); ctx.fill();
+      }
+      if (fresh) { ctx.save(); ctx.globalAlpha = 0.55 * (1 - (t - landed) / 2600); ctx.drawImage(SPR[r.plot.hue], r.x + r.w / 2 - 70, r.y - 44, 140, 100); ctx.restore(); }
+      // reflection: a wavering smear of the course's light
+      ctx.save(); ctx.globalAlpha = 0.10; ctx.fillStyle = '#7E6FD0';
+      var rw = r.w * (0.85 + 0.1 * Math.sin(t / 600 + seg.rank));
+      ctx.fillRect(r.x + (r.w - rw) / 2 + Math.sin(t / 500 + seg.rank * 1.7) * 2.5, SHORE + 6 + (seg.level * 7) % 60, rw, 5);
+      ctx.restore();
+    });
+
+    // windows — kindle once a tower is complete; the inhabited city flickers
+    var inhabitedness = info.act.id === 'inhabited' ? 1
+      : info.act.id === 'rising' ? Math.max(0, info.frac - 0.45) * 1.6
+      : info.act.id === 'dissolution' ? Math.max(0, 1 - info.frac * 1.6) : 0;
+    if (inhabitedness > 0.02) {
+      city.plots.forEach(function (p, pi) {
+        var built = 0;
+        city.segs.forEach(function (s) { if (s.plot === pi && s.rank < target) built++; });
+        if (built < p.target) return; // only finished towers are inhabited
+        p.win.forEach(function (wn) {
+          var wx = p.x + 12 + wn.c * 26, wy = SHORE - 16 - wn.r * 13;
+          if (wy < SHORE - p.target * SEG_H + 6) return;
+          var tw = 0.55 + 0.45 * Math.sin(t / 2600 + wn.ph);
+          ctx.save(); ctx.globalAlpha = Math.min(1, inhabitedness) * (0.35 + 0.55 * tw);
+          ctx.fillStyle = HUECOL[wn.hue]; ctx.fillRect(wx, wy, 6.5, 8.5);
+          ctx.restore();
+          ctx.save(); ctx.globalAlpha = 0.12 * inhabitedness; ctx.fillStyle = HUECOL[wn.hue];
+          ctx.fillRect(wx + Math.sin(t / 480 + wn.ph) * 2, SHORE + 8 + (wn.r * 11) % 130, 6.5, 12); ctx.restore();
+        });
+      });
+    }
+
+    // --- delivery streaks ---
+    state.streaks = state.streaks.filter(function (s) { return t - s.t0 < s.dur; });
+    state.streaks.forEach(function (s) {
+      var k = (t - s.t0) / s.dur, x = s.x0 + (s.x1 - s.x0) * k, y = s.y0 + (s.y1 - s.y0) * k;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(190,220,255,.5)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(s.x0 + (s.x1 - s.x0) * Math.max(0, k - 0.14), s.y0 + (s.y1 - s.y0) * Math.max(0, k - 0.14)); ctx.lineTo(x, y); ctx.stroke();
+      ctx.globalAlpha = 0.8; ctx.drawImage(SPR.cyan, x - 26, y - 26, 52, 52);
+      ctx.restore();
+    });
+
+    // --- shoreline ---
+    ctx.fillStyle = '#05040F'; ctx.fillRect(0, SHORE - 3, W, 5);
+    ctx.fillStyle = 'rgba(160,180,255,.14)'; ctx.fillRect(0, SHORE - 3, W, 1.4);
+
+    poemScheduler(info);
+    updateCaption(info);
+    state.actId = info.act.id;
+  }
+
+  var captionEl = document.getElementById('captionline'), lastCaption = '';
+  function updateCaption(info) {
+    var txt;
+    if (info.day && !info.locked) {
+      txt = 'Act I · The Shore — by day the shore rests. The city returns at nightfall, 7 PM.';
+    } else {
+      var feed = state.flightsOk && state.flights !== null
+        ? state.flights + ' aircraft overhead are carrying in the parts'
+        : 'deliveries are unguided tonight — the sky feed is silent';
+      txt = 'Act ' + info.act.name + ' · ' + feed + ' · ' + POEMS.length + ' poems in tonight\u2019s bank';
+    }
+    if (txt !== lastCaption) { captionEl.textContent = txt; lastCaption = txt; }
+  }
+
+  // Burn-in hygiene: nudge the chrome a few px every 5 min.
+  var chromeShift = 0;
+  setInterval(function () {
+    chromeShift = (chromeShift + 3) % 9;
+    document.getElementById('chrome').style.transform = 'translate(' + chromeShift + 'px,' + (chromeShift % 5) + 'px)';
+  }, 300000);
+
+  // QA pin: hold one poem on screen.
+  if (PIN_POEM >= 0 && POEMS[PIN_POEM]) {
+    var pp = POEMS[PIN_POEM];
+    poemLines.innerHTML = pp.lines.map(function (l) { return '<div class="line">' + l + '</div>'; }).join('');
+    poemAttr.textContent = pp.attr;
+    poemEl.style.transition = 'opacity 1.2s ease-in-out';
+    requestAnimationFrame(function () { poemEl.classList.add('on'); });
+    poemBusyUntil = Infinity;
+  }
+
+  // ---------- frame loop, ~30 fps ----------
+  var lastFrame = 0;
+  function loop(t) {
+    requestAnimationFrame(loop);
+    if (t - lastFrame < 33) return;
+    lastFrame = t;
+    render(t);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

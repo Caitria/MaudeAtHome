@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flights Overhead — self-rendered scope</title>
+<!--
+  Why self-rendered: an embedded third-party globe iframe never finished
+  loading in the Lenovo display's cast webview (white pane, spinner forever). So the
+  map is gone; this page renders the sky ITSELF from raw ADS-B JSON:
+    data  : adsb.lol point query (YOUR_LAT, YOUR_LON, 30 nm), proxied same-origin by
+            the caster Pi's control service at :8081/adsb (adsb.lol sends no CORS
+            header; the proxy also caches 12 s). Positions dead-reckoned
+            between 15 s polls so planes glide instead of jumping.
+    scope : canvas — range rings 10/20/30 nm, real place labels by lat/lon,
+            house at centre, aircraft as heading glyphs coloured by altitude.
+  An optional upgrade path: a rooftop SDR receiver feeding a local
+  ADS-B source instead of the public aggregator.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #050B14; }
+  body { font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace; color: #BFE9FF;
+         display: flex; }
+  #scopewrap { position: relative; flex: 1; }
+  #scope { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #rail { width: 452px; flex-shrink: 0; border-left: 1px solid rgba(103,232,249,.25);
+    background: linear-gradient(180deg, rgba(8,20,34,.92), rgba(5,11,20,.96)); padding: 26px 28px; display: flex; flex-direction: column; }
+  .kicker { font-size: 15px; letter-spacing: .26em; color: #67E8F9; font-weight: 700; }
+  h1 { font-size: 31px; color: #E8FAFF; margin-top: 7px; letter-spacing: .03em; }
+  .sub { font-size: 15.5px; color: #8FC6DE; margin-top: 6px; line-height: 1.45; }
+  #clock { font-size: 43px; font-weight: 700; color: #E8FAFF; margin-top: 18px; font-variant-numeric: tabular-nums; line-height: 1; }
+  #count { font-size: 17px; color: #A5F3FC; margin-top: 8px; }
+  #count b { color: #E8FAFF; }
+  h2 { font-size: 14.5px; letter-spacing: .22em; color: #67E8F9; margin: 24px 0 10px; font-weight: 700; }
+  .ac { display: flex; justify-content: space-between; align-items: baseline; padding: 7px 0; border-bottom: 1px solid rgba(103,232,249,.12); }
+  .ac .cs { font-size: 19px; font-weight: 700; color: #E8FAFF; }
+  .ac .tp { font-size: 14px; color: #8FC6DE; margin-left: 8px; }
+  .ac .dt { font-size: 15.5px; color: #BFE9FF; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ac .dt .arr { color: #FFC454; }
+  #feedstate { font-size: 14.5px; color: #7FA8BF; line-height: 1.5; }
+  #feedstate.err { color: #FF9D8A; }
+  .spacer { flex: 1; }
+  .sdr { font-size: 14.5px; color: #7FA8BF; line-height: 1.5; border-top: 1px solid rgba(103,232,249,.15); padding-top: 14px; }
+  .sdr b { color: #BFE9FF; }
+  .legend { display: flex; gap: 14px; font-size: 13.5px; color: #8FC6DE; margin-top: 10px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+</style>
+</head>
+<body>
+<div id="scopewrap"><canvas id="scope"></canvas></div>
+
+<div id="rail">
+  <div class="kicker">Flights Overhead · South Bay</div>
+  <h1>✈ OVER THE HOUSE</h1>
+  <div class="sub">Live aircraft within 30 nm of the house — SJC arrivals, SFO flows, and everything between.</div>
+  <div id="clock">--:--</div>
+  <div id="count">Contacting the sky…</div>
+  <div class="legend">
+    <span><i style="background:#FFC454"></i>below 3,000 ft</span>
+    <span><i style="background:#67E8F9"></i>to 12,000 ft</span>
+    <span><i style="background:#E8FAFF"></i>above</span>
+  </div>
+  <h2>NEAREST TRAFFIC</h2>
+  <div id="list"><div class="ac"><span class="cs">…</span></div></div>
+  <div class="spacer"></div>
+  <div id="feedstate">Feed: adsb.lol community network, via the house Pi · updates every 15 s · <span id="fetched">—</span></div>
+  <div class="sdr" style="margin-top:12px"><b>FUTURE:</b> our own rooftop SDR receiver feeding this scope directly — a separate purchase decision, not bought.</div>
+</div>
+
+<script>
+  var YOUR_LAT = 0.0, YOUR_LON = 0.0; // CONFIG: set to your home's latitude/longitude
+  var LAT0 = YOUR_LAT, LON0 = YOUR_LON, RANGE = 30; // nm
+  var planes = {}, lastFetch = 0;
+  // CONFIG: place labels drawn on the scope, as [NAME, lat, lon].
+  // Add your own nearby towns/airports; the first entry should be home.
+  var PLACES = [
+    ['HOME', YOUR_LAT, YOUR_LON]
+  ];
+  function nm(lat, lon) { // offset in nm from the house
+    return { x: (lon - LON0) * 60 * Math.cos(LAT0 * Math.PI / 180), y: (LAT0 - lat) * 60 };
+  }
+  function compass(brg) {
+    var pts = ['N','NE','E','SE','S','SW','W','NW'];
+    return pts[Math.round(((brg % 360) / 45)) % 8];
+  }
+  function bearing(lat, lon) {
+    var dx = (lon - LON0) * Math.cos(LAT0 * Math.PI / 180), dy = lat - LAT0;
+    return (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+  }
+  function tickClock() {
+    var d = new Date(), h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    document.getElementById('clock').textContent = h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  function load() {
+    fetch('http://CASTPI_LAN_IP:8081/adsb').then(function(r) { return r.json(); }).then(function(j) {
+      var now = Date.now(), seen = {};
+      (j.ac || []).forEach(function(a) {
+        if (a.lat === undefined || a.lon === undefined) return;
+        var key = a.hex || (a.flight || '?');
+        var old = planes[key];
+        planes[key] = { cs: (a.flight || a.r || '———').trim(), type: a.desc || a.t || '', lat: a.lat, lon: a.lon,
+          alt: a.alt_baro, gs: a.gs || 0, trk: a.track || 0, rate: a.baro_rate || 0, dst: a.dst, at: now,
+          trail: old ? old.trail : [] };
+        seen[key] = 1;
+      });
+      Object.keys(planes).forEach(function(k) { if (!seen[k] && now - planes[k].at > 45000) delete planes[k]; });
+      lastFetch = now;
+      var d = new Date(), h = d.getHours(), m = d.getMinutes();
+      var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+      document.getElementById('fetched').textContent = 'updated ' + h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+      var fs = document.getElementById('feedstate'); fs.className = '';
+      renderList();
+    }).catch(function() {
+      var fs = document.getElementById('feedstate');
+      fs.className = 'err';
+      document.getElementById('fetched').textContent = 'FEED UNREACHABLE — showing last traffic';
+    });
+  }
+  function pos(p, now) { // dead-reckoned position
+    var dt = Math.min((now - p.at) / 1000, 20); // cap extrapolation
+    var dist = p.gs * dt / 3600, rad = p.trk * Math.PI / 180;
+    var dlat = dist * Math.cos(rad) / 60, dlon = dist * Math.sin(rad) / (60 * Math.cos(LAT0 * Math.PI / 180));
+    return { lat: p.lat + dlat, lon: p.lon + dlon };
+  }
+  function renderList() {
+    var arr = Object.keys(planes).map(function(k) { return planes[k]; })
+      .sort(function(a, b) { return (a.dst || 99) - (b.dst || 99); }).slice(0, 8);
+    document.getElementById('count').innerHTML = '<b>' + Object.keys(planes).length + '</b> aircraft in range';
+    document.getElementById('list').innerHTML = arr.map(function(p) {
+      var arrw = p.rate > 300 ? ' <span class="arr">↑</span>' : p.rate < -300 ? ' <span class="arr">↓</span>' : '';
+      var alt = (p.alt === 'ground' || p.alt === undefined) ? 'ground' : Math.round(p.alt).toLocaleString() + ' ft';
+      return '<div class="ac"><span><span class="cs">' + p.cs + '</span><span class="tp">' + p.type + '</span></span>' +
+        '<span class="dt">' + alt + arrw + ' · ' + (p.dst ? p.dst.toFixed(0) : '?') + ' nm ' + compass(bearing(p.lat, p.lon)) + '</span></div>';
+    }).join('') || '<div class="ac"><span class="cs">No traffic</span></div>';
+  }
+  function draw() {
+    var c = document.getElementById('scope'), wrap = document.getElementById('scopewrap');
+    var W = wrap.clientWidth, H = wrap.clientHeight;
+    if (c.width !== W) { c.width = W; c.height = H; }
+    var ctx = c.getContext('2d'), now = Date.now();
+    var cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 54;
+    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.25);
+    g.addColorStop(0, '#0A2233'); g.addColorStop(1, '#050B14');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    // rings + cross
+    ctx.strokeStyle = 'rgba(103,232,249,.22)'; ctx.lineWidth = 1;
+    [10, 20, 30].forEach(function(r) {
+      ctx.beginPath(); ctx.arc(cx, cy, R * r / RANGE, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = 'rgba(143,198,222,.75)'; ctx.font = '13px ui-monospace, monospace';
+      ctx.fillText(r + ' nm', cx + 6, cy - R * r / RANGE + 15);
+    });
+    ctx.beginPath(); ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
+    ctx.strokeStyle = 'rgba(103,232,249,.10)'; ctx.stroke();
+    ctx.fillStyle = 'rgba(143,198,222,.8)'; ctx.font = '13px ui-monospace, monospace';
+    ctx.fillText('N', cx - 4, cy - R - 12);
+    // places
+    ctx.font = '14px ui-monospace, monospace';
+    PLACES.forEach(function(pl) {
+      var o = nm(pl[1], pl[2]), x = cx + o.x / RANGE * R, y = cy + o.y / RANGE * R;
+      if (Math.abs(o.x) > RANGE || Math.abs(o.y) > RANGE) return;
+      ctx.fillStyle = 'rgba(143,198,222,.55)';
+      ctx.fillRect(x - 2, y - 2, 4, 4);
+      ctx.fillStyle = 'rgba(143,198,222,.75)';
+      ctx.fillText(pl[0], x + 8, y + 4);
+    });
+    // house
+    var pulse = (now % 2400) / 2400;
+    ctx.beginPath(); ctx.arc(cx, cy, 6 + pulse * 22, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(103,232,249,' + (0.55 * (1 - pulse)) + ')'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#E8FAFF'; ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#E8FAFF'; ctx.font = 'bold 14px ui-monospace, monospace'; ctx.fillText('⌂ HOUSE', cx + 12, cy + 5);
+    // planes
+    Object.keys(planes).forEach(function(k) {
+      var p = planes[k], pp = pos(p, now), o = nm(pp.lat, pp.lon);
+      if (Math.abs(o.x) > RANGE * 1.05 || Math.abs(o.y) > RANGE * 1.05) return;
+      var x = cx + o.x / RANGE * R, y = cy + o.y / RANGE * R;
+      p.trail.push([x, y]); if (p.trail.length > 7) p.trail.shift();
+      ctx.strokeStyle = 'rgba(103,232,249,.30)';
+      ctx.beginPath(); p.trail.forEach(function(t, i) { i ? ctx.lineTo(t[0], t[1]) : ctx.moveTo(t[0], t[1]); }); ctx.stroke();
+      var col = (p.alt === 'ground' || !p.alt || p.alt < 3000) ? '#FFC454' : p.alt < 12000 ? '#67E8F9' : '#E8FAFF';
+      ctx.save(); ctx.translate(x, y); ctx.rotate((p.trk || 0) * Math.PI / 180);
+      ctx.fillStyle = col; ctx.beginPath();
+      ctx.moveTo(0, -11); ctx.lineTo(7, 8); ctx.lineTo(0, 4); ctx.lineTo(-7, 8); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      if ((p.dst || 99) < 19) {
+        ctx.fillStyle = 'rgba(232,250,255,.92)'; ctx.font = '14px ui-monospace, monospace';
+        ctx.fillText(p.cs, x + 12, y - 6);
+        ctx.fillStyle = 'rgba(143,198,222,.85)'; ctx.font = '12.5px ui-monospace, monospace';
+        ctx.fillText(p.alt === 'ground' ? 'gnd' : Math.round(p.alt / 100) + '00 ft', x + 12, y + 9);
+      }
+    });
+    requestAnimationFrame(draw);
+  }
+  tickClock(); setInterval(tickClock, 15000);
+  load(); setInterval(load, 15000);
+  requestAnimationFrame(draw);
+</script>
+</body>
+</html>

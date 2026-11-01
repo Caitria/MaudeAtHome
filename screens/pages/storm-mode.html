@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Storm Mode — Living Weather</title>
+<!--
+  STORM MODE — one page, three scenes + an
+  interrupt, all self-rendered from free live data (no third-party iframes):
+    1. LIVING RADAR — Leaflet (vendored, storm-assets/) + dark basemap (Esri
+       World Dark Gray — CARTO dark_all now watermarks keyless tiles, see
+       note in the build code) + RainViewer animated radar, past frames
+       looping with crossfades, house
+       pulse-ring at YOUR_TOWN, NWS warning polygons when active, one big
+       editorial headline + a data-age line.
+    2. WIND MADE VISIBLE — canvas particle flow field over the local region
+       from Open-Meteo gridded wind (u/v, bilinear), speed ramp
+       white -> cyan -> apricot -> magenta. nullschool-heart, self-built.
+    3. PLANET WINDOW — NOAA GOES-18 GeoColor (Pacific Southwest sector)
+       full-bleed, slow Ken Burns, crossfade refresh every 5 min.
+    4. ALERT INTERRUPT — NWS api.weather.gov active alerts for the house
+       point, polled every 60 s; an active alert interrupts the rotation with
+       a giant typographic poster for 90 s, then rotation resumes.
+  Rotation ~4 min per scene, condition-weighted: radar leads when echoes are
+  near, wind leads when dry and breezy, satellite leads when calm and clear.
+  Ambient rules: dark, slow, no audio, data age always shown, overlays
+  pixel-shift for burn-in hygiene, every feed failure degrades to a labelled
+  fallback — never a blank screen.
+  QA: ?scene=radar|wind|planet|poster locks one scene (poster falls back to a
+  clearly labelled SPECIMEN alert when no real alert is active).
+  Data: RainViewer (weather data by RainViewer) · CARTO / OpenStreetMap ·
+  Open-Meteo (CC BY 4.0) · NOAA NESDIS · NWS api.weather.gov. No keys.
+-->
+<link rel="stylesheet" href="storm-assets/leaflet.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #04060B; }
+  body { font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif; color: #E8EEF7; }
+
+  #stage { position: fixed; left: 50%; top: 50%; width: 1920px; height: 1080px;
+           transform-origin: center center; background: #04060B; overflow: hidden; }
+
+  .scene { position: absolute; inset: 0; opacity: 0; transition: opacity 2.2s ease; pointer-events: none; isolation: isolate; }
+  /* isolation: isolate is load-bearing — Leaflet's panes carry z-indexes up to
+     700 that otherwise escape into the stage stacking context and paint OVER
+     the chrome (QA caught the headline rendered under the map's tint). */
+  .scene.on { opacity: 1; }
+
+  /* ---------- Scene 1: Living Radar ---------- */
+  #scene-radar { background: #070B14; }
+  #radmap { position: absolute; inset: 0; background: #070B14; }
+  #radmap .leaflet-tile-pane { filter: saturate(.92); }
+  .house-pulse { position: relative; width: 12px; height: 12px; }
+  .house-pulse .core { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px;
+    border-radius: 50%; background: #F6CFAF; box-shadow: 0 0 10px rgba(246,207,175,.95), 0 0 2px #fff; }
+  .house-pulse .ring { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+    border-radius: 50%; border: 2px solid rgba(246,207,175,.75); animation: pulse 4s ease-out infinite; }
+  @keyframes pulse { 0% { transform: scale(.6); opacity: .9; } 70% { transform: scale(3.4); opacity: 0; } 100% { transform: scale(3.4); opacity: 0; } }
+  .radar-tint { position: absolute; inset: 0; background: radial-gradient(120% 90% at 50% 42%, rgba(0,0,0,0) 55%, rgba(2,4,10,.55) 100%); }
+
+  /* ---------- Scene 2: Wind ---------- */
+  #scene-wind { background: linear-gradient(178deg, #060A24 0%, #050914 55%, #03040C 100%); }
+  #windbg, #windcv { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* ---------- Scene 3: Planet Window ---------- */
+  #scene-planet { background: #000; }
+  .sat { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 2.6s ease; }
+  .sat.on { opacity: 1; animation: kenburns 130s ease-in-out infinite alternate; }
+  @keyframes kenburns { from { transform: scale(1.03) translate(0,0); } to { transform: scale(1.10) translate(-1.2%, 1%); } }
+  .sat-vignette { position: absolute; inset: 0; background: radial-gradient(115% 100% at 50% 45%, rgba(0,0,0,0) 58%, rgba(0,0,0,.5) 100%); }
+
+  /* ---------- Shared chrome ---------- */
+  #chrome { position: absolute; inset: 0; z-index: 900; pointer-events: none; transition: transform 3s ease; }
+  .kicker { position: absolute; left: 56px; top: 42px; font-size: 20px; letter-spacing: .3em;
+            text-transform: uppercase; color: rgba(214,226,246,.82); font-weight: 700;
+            text-shadow: 0 2px 14px rgba(0,0,0,.8); }
+  .kicker b { color: #F6CFAF; font-weight: 700; }
+  #scenename { color: rgba(214,226,246,.6); }
+  #headline { position: absolute; left: 56px; bottom: 108px; max-width: 1560px;
+              font-size: 74px; font-weight: 620; line-height: 1.08; letter-spacing: -.01em;
+              color: #F2F6FD; text-shadow: 0 3px 26px rgba(0,0,0,.85), 0 0 3px rgba(0,0,0,.9); }
+  #subline { position: absolute; left: 58px; bottom: 58px; font-size: 25px; color: rgba(205,218,240,.85);
+             text-shadow: 0 2px 12px rgba(0,0,0,.85); }
+  #dataline { position: absolute; right: 56px; bottom: 58px; text-align: right; font-size: 21px;
+              color: rgba(178,196,226,.78); text-shadow: 0 2px 10px rgba(0,0,0,.85); line-height: 1.5; }
+  #specimen { display: none; position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
+              background: #B3261E; color: #fff; font-weight: 700; font-size: 19px; letter-spacing: .14em;
+              padding: 9px 24px; border-radius: 999px; }
+  #specimen.on { display: block; }
+  .dots { position: absolute; right: 56px; top: 44px; display: flex; gap: 10px; align-items: center; }
+  .dots i { width: 11px; height: 11px; border-radius: 50%; background: rgba(220,232,250,.28); display: block; }
+  .dots i.on { background: #F6CFAF; box-shadow: 0 0 10px rgba(246,207,175,.7); }
+
+  /* ---------- Alert poster ---------- */
+  #poster { position: absolute; inset: 0; z-index: 1000; background: #0A0A0C; display: none;
+            padding: 92px 110px; flex-direction: column; }
+  #poster.on { display: flex; }
+  #poster .pk { font-size: 24px; letter-spacing: .34em; text-transform: uppercase; color: rgba(232,238,247,.65); font-weight: 700; }
+  #poster .pevent { font-size: 148px; font-weight: 800; line-height: .98; letter-spacing: -.015em;
+                     text-transform: uppercase; margin-top: 34px; max-width: 1640px; }
+  #poster.warn .pevent { color: #FF6B6F; } #poster.watch .pevent { color: #FFB648; } #poster.adv .pevent { color: #9DB8E8; }
+  #poster .phead { font-size: 40px; line-height: 1.3; color: #E8EEF7; margin-top: 36px; max-width: 1500px; font-weight: 560; }
+  #poster .pmeta { font-size: 29px; color: rgba(205,218,240,.85); margin-top: 30px; line-height: 1.5; }
+  #poster .pinstr { font-size: 30px; line-height: 1.45; color: rgba(232,238,247,.92); margin-top: auto;
+                    border-top: 2px solid rgba(232,238,247,.22); padding-top: 30px; max-width: 1560px; }
+  #poster .pspec { display: none; margin-top: 22px; align-self: flex-start; background: #B3261E; color: #fff;
+                   font-weight: 700; font-size: 19px; letter-spacing: .14em; padding: 9px 24px; border-radius: 999px; }
+  #poster.spec .pspec { display: block; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- Scene 1: Living Radar -->
+  <div class="scene" id="scene-radar">
+    <div id="radmap"></div>
+    <div class="radar-tint"></div>
+  </div>
+
+  <!-- Scene 2: Wind Made Visible -->
+  <div class="scene" id="scene-wind">
+    <canvas id="windbg" width="1920" height="1080"></canvas>
+    <canvas id="windcv" width="1600" height="900"></canvas>
+  </div>
+
+  <!-- Scene 3: Planet Window -->
+  <div class="scene" id="scene-planet">
+    <img class="sat" id="sat-a" alt="">
+    <img class="sat" id="sat-b" alt="">
+    <div class="sat-vignette"></div>
+  </div>
+
+  <!-- Shared chrome -->
+  <div id="chrome">
+    <div class="kicker">Storm Mode · <b id="scenename">Living Radar</b></div>
+    <div class="dots"><i id="dot-radar"></i><i id="dot-wind"></i><i id="dot-planet"></i></div>
+    <div id="specimen">SPECIMEN — A FEED FAILED, SHOWING FALLBACK</div>
+    <div id="headline">Reading the sky…</div>
+    <div id="subline"></div>
+    <div id="dataline"></div>
+  </div>
+
+  <!-- Alert interrupt -->
+  <div id="poster">
+    <div class="pk">National Weather Service</div>
+    <div class="pevent" id="p-event">—</div>
+    <div class="phead" id="p-head"></div>
+    <div class="pmeta" id="p-meta"></div>
+    <div class="pspec">SPECIMEN — LAYOUT QA ONLY, NOT A REAL ALERT</div>
+    <div class="pinstr" id="p-instr"></div>
+  </div>
+
+</div>
+
+<script src="storm-assets/leaflet.js"></script>
+<script>
+(function () {
+  'use strict';
+  var YOUR_LAT = 0.0, YOUR_LON = 0.0; // CONFIG: set to your home's latitude/longitude
+  var HOUSE = [YOUR_LAT, YOUR_LON];
+  var QA = new URLSearchParams(location.search).get('scene');
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ================= Stage fit ================= */
+  function fit() {
+    var s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    $('stage').style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+  }
+  window.addEventListener('resize', fit); fit();
+
+  function fmtTime(d) {
+    var h = d.getHours(), m = d.getMinutes(), ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12; if (h === 0) h = 12;
+    return h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  function ageText(t) {
+    var min = Math.max(0, Math.round((Date.now() - t) / 60000));
+    return min <= 1 ? 'just now' : min + ' min old';
+  }
+  function setSpecimen(on) { $('specimen').className = on ? 'on' : ''; }
+
+  /* ================= Scene manager ================= */
+  var SCENES = ['radar', 'wind', 'planet'];
+  var NAMES = { radar: 'Living Radar', wind: 'Wind Made Visible', planet: 'Planet Window' };
+  var current = null, rotationTimer = null, posterUntil = 0, lastPosterEnd = 0, alertState = null;
+
+  function showScene(name) {
+    SCENES.forEach(function (s) {
+      $('scene-' + s).className = 'scene' + (s === name ? ' on' : '');
+      $('dot-' + s).className = s === name ? 'on' : '';
+    });
+    current = name;
+    $('scenename').textContent = NAMES[name];
+    updateChrome();
+    if (name === 'wind') Wind.start(); else Wind.stop();
+    if (name === 'radar' && window.__map) setTimeout(function () { window.__map.invalidateSize(); }, 300);
+  }
+  function specFor(name) {
+    if (name === 'radar') return Radar.isFailed();
+    if (name === 'wind') return Wind.isSpecimen();
+    if (name === 'planet') return Planet.isFailed();
+    return false;
+  }
+  function updateChrome() {
+    if (current === 'radar') Radar.chrome();
+    else if (current === 'wind') Wind.chrome();
+    else if (current === 'planet') Planet.chrome();
+    setSpecimen(specFor(current));
+  }
+
+  /* ================= 1. LIVING RADAR ================= */
+  var Radar = (function () {
+    var map = null, frameLayers = [], frameTimes = [], frameIdx = -1, animTimer = null,
+        host = '', latestTime = 0, echoRegion = null, echoNear = null, built = false,
+        polyLayer = null, failed = false, headline = 'Living radar — the last two hours, looping';
+
+    function build() {
+      if (built || typeof L === 'undefined') return;
+      built = true;
+      map = L.map('radmap', {
+        zoomControl: false, attributionControl: false, dragging: false,
+        scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
+        keyboard: false, zoomAnimation: false, fadeAnimation: false,
+        inertia: false
+      }).setView(HOUSE, 8);
+      window.__map = map;
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 16, opacity: 0.9
+      }).addTo(map);
+      // NOTE: CARTO dark_all was the original basemap, but it
+      // serves "API KEY REQUIRED" watermark tiles to keyless requests (verified
+      // in QA) — Esri World Dark Gray is the keyless dark basemap instead, with
+      // its reference/labels layer in a pane above the radar frames.
+      map.createPane('labels'); map.getPane('labels').style.zIndex = 500; map.getPane('labels').style.pointerEvents = 'none';
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 16, pane: 'labels'
+      }).addTo(map);
+      var icon = L.divIcon({ className: '', html: '<div class="house-pulse"><span class="ring"></span><span class="core"></span></div>', iconSize: [12, 12], iconAnchor: [6, 6] });
+      L.marker(HOUSE, { icon: icon, interactive: false }).addTo(map);
+      polyLayer = L.geoJSON(null, { style: function () { return {}; } }).addTo(map);
+    }
+
+    function frameURL(path) { return host + path + '/512/{z}/{x}/{y}/2/1_1.png'; }
+
+    function refresh() {
+      fetch('https://api.rainviewer.com/public/weather-maps.json')
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(function (j) {
+          failed = false;
+          host = j.host;
+          var past = (j.radar && j.radar.past) || [];
+          var now = (j.radar && j.radar.nowcast) || [];
+          var frames = past.concat(now.slice(0, 2));
+          if (!frames.length) throw new Error('no frames');
+          // rebuild layers
+          frameLayers.forEach(function (l) { if (map.hasLayer(l)) map.removeLayer(l); });
+          frameLayers = frames.map(function (f) {
+            return L.tileLayer(frameURL(f.path), { maxNativeZoom: 7, maxZoom: 19, opacity: 0, zIndex: 5 });
+          });
+          frameTimes = frames.map(function (f) { return f.time * 1000; });
+          latestTime = frameTimes[frameTimes.length - 1];
+          frameIdx = -1;
+          startAnim();
+          measureEcho(frames[frames.length - 1].path);
+          if (current === 'radar') updateChrome();
+        })
+        .catch(function () {
+          failed = true;
+          headline = 'Radar feed unavailable — the map is live, the rain layer is not';
+          if (current === 'radar') updateChrome();
+        });
+    }
+
+    function startAnim() {
+      if (animTimer) clearInterval(animTimer);
+      advance();
+      animTimer = setInterval(advance, 1750);
+    }
+    var holdUntil = 0;
+    function advance() {
+      if (!frameLayers.length) return;
+      if (Date.now() < holdUntil) return;
+      var next = frameIdx + 1;
+      if (next >= frameLayers.length) { next = 0; }
+      var incoming = frameLayers[next], outgoing = frameIdx >= 0 ? frameLayers[frameIdx] : null;
+      if (!map.hasLayer(incoming)) incoming.addTo(map);
+      tween(incoming, 0.92, null);
+      if (outgoing && outgoing !== incoming) tween(outgoing, 0, function () { if (map.hasLayer(outgoing)) map.removeLayer(outgoing); });
+      frameIdx = next;
+      if (frameIdx === frameLayers.length - 1) holdUntil = Date.now() + 4200; // hold newest frame
+      if (current === 'radar') updateChrome();
+    }
+    function tween(layer, to, done) {
+      var from = layer.options.opacity || 0, t0 = Date.now(), D = 620;
+      (function step() {
+        var k = Math.min(1, (Date.now() - t0) / D), v = from + (to - from) * k;
+        try { layer.setOpacity(v); } catch (e) {}
+        if (k < 1) requestAnimationFrame(step); else if (done) done();
+      })();
+    }
+
+    /* Radar coverage near the house — sampled from the latest frame's tiles
+       (tilecache serves CORS *, so canvas readout is allowed). Humble,
+       rule-based headline only; no arrival-time claims.
+       Tile math (z7): the house tile and its pixel offset are computed
+       (384, 394) of the 2x3 mosaic below. (An earlier version used tiles
+       y50-52 — one row too far south; QA caught it.) */
+    function measureEcho(path) {
+      try {
+        var z = 7, x0 = 20, y0 = 49, done = 0;
+        var cv = document.createElement('canvas'); cv.width = 1024; cv.height = 1536;
+        var cx = cv.getContext('2d');
+        for (var x = x0; x <= x0 + 1; x++) for (var y = y0; y <= y0 + 2; y++) (function (x, y) {
+          var img = new Image(); img.crossOrigin = 'anonymous';
+          img.onload = function () { cx.drawImage(img, (x - x0) * 512, (y - y0) * 512); if (++done === 6) score(); };
+          img.onerror = function () { if (++done === 6) score(); };
+          img.src = host + path + '/512/' + z + '/' + x + '/' + y + '/2/1_1.png';
+        })(x, y);
+        function score() {
+          try {
+            var d = cx.getImageData(0, 0, 1024, 1536).data, tot = 0, op = 0;
+            for (var i = 3; i < d.length; i += 16) { tot++; if (d[i] > 40) op++; }
+            echoRegion = op / tot;
+            var near = cx.getImageData(384 - 75, 394 - 75, 150, 150).data, nt = 0, no = 0;
+            for (var j = 3; j < near.length; j += 16) { nt++; if (near[j] > 40) no++; }
+            echoNear = no / nt;
+            if (echoNear > 0.02) headline = 'Rain over YOUR_TOWN now';
+            else if (echoRegion > 0.012) headline = 'Showers in the hills around the valley';
+            else if (echoRegion > 0.002) headline = 'A few echoes far off — the valley is dry';
+            else headline = 'No rain on the radar — clear over the valley';
+            if (current === 'radar') updateChrome();
+          } catch (e) { /* tainted canvas etc. — keep prior headline */ }
+        }
+      } catch (e) {}
+    }
+
+    function setPolygons(alerts) {
+      if (!polyLayer) return;
+      polyLayer.clearLayers();
+      (alerts || []).forEach(function (a) {
+        if (!a.geometry) return;
+        var sev = (a.properties.severity || '').toLowerCase();
+        var col = a.properties.event && /warning/i.test(a.properties.event) ? '#E5484D'
+                : a.properties.event && /watch/i.test(a.properties.event) ? '#F5A524' : '#7FA8E0';
+        var layer = L.geoJSON(a.geometry, { style: { color: col, weight: 2, opacity: .8, fillColor: col, fillOpacity: .16 } });
+        polyLayer.addLayer(layer);
+      });
+    }
+
+    return {
+      build: build, refresh: refresh, setPolygons: setPolygons,
+      isFailed: function () { return failed; },
+      hasEcho: function () { return echoRegion !== null && echoRegion > 0.012; },
+      chrome: function () {
+        $('headline').textContent = (alertState && alertState.headlineOverride) || headline;
+        $('subline').textContent = 'Animated radar · past two hours, looping · your house at the pulse';
+        $('dataline').innerHTML = (latestTime ? 'radar ' + fmtTime(new Date(latestTime)) + ' · ' + ageText(latestTime) : 'radar —') +
+          '<br>Basemap © Esri, HERE, Garmin, OpenStreetMap contributors<br>Weather data by RainViewer';
+      }
+    };
+  })();
+
+  /* ================= 2. WIND MADE VISIBLE ================= */
+  var Wind = (function () {
+    var LATS = [1.07, 0.62, 0.17, -0.28, -0.73].map(function (d) { return YOUR_LAT + d; }),
+      LONS = [-1.05, -0.60, -0.15, 0.30, 0.75].map(function (d) { return YOUR_LON + d; });
+    var EXT = { lonMin: YOUR_LON - 1.50, lonMax: YOUR_LON + 1.20, latMin: YOUR_LAT - 1.08, latMax: YOUR_LAT + 1.42 };
+    var grid = null, running = false, raf = 0, houseWind = null, specimen = false;
+    var P = [], N = 2300;
+
+    function url() {
+      var lats = [], lons = [];
+      LATS.forEach(function (la) { LONS.forEach(function (lo) { lats.push(la); lons.push(lo); }); });
+      return 'https://api.open-meteo.com/v1/forecast?latitude=' + lats.join(',') + '&longitude=' + lons.join(',') +
+        '&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&forecast_days=1&wind_speed_unit=mph&timezone=auto';
+    }
+    function load() {
+      fetch(url()).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(function (j) {
+          var arr = Array.isArray(j) ? j : [j], hr = new Date().getHours(), g = [], k = 0;
+          for (var r2 = 0; r2 < 5; r2++) { g.push([]); for (var c = 0; c < 5; c++) {
+            var pt = arr[k++], sp = pt.hourly.wind_speed_10m[hr], di = pt.hourly.wind_direction_10m[hr];
+            var rad = di * Math.PI / 180;
+            g[r2].push({ u: -sp * Math.sin(rad), v: -sp * Math.cos(rad), sp: sp, gu: pt.hourly.wind_gusts_10m[hr], di: di });
+          } }
+          grid = g; specimen = false;
+          sampleHouse();
+          if (current === 'wind') { startWind(); updateChrome(); }
+        })
+        .catch(function () {
+          if (!grid) { // labelled specimen: uniform gentle SW flow
+            grid = []; specimen = true;
+            for (var r2 = 0; r2 < 5; r2++) { grid.push([]); for (var c = 0; c < 5; c++) grid[r2].push({ u: 4.2, v: 2.9, sp: 6, gu: 9, di: 225 }); }
+            sampleHouse();
+            if (current === 'wind') { startWind(); updateChrome(); }
+          }
+        });
+    }
+    function field(lon, lat) { // bilinear on the 5x5 grid (rows north->south)
+      if (!grid) return null;
+      var fx = (lon - LONS[0]) / 0.45, fy = (LATS[0] - lat) / 0.45;
+      fx = Math.max(0, Math.min(3.999, fx)); fy = Math.max(0, Math.min(3.999, fy));
+      var x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
+      function mix(a, b, t) { return a + (b - a) * t; }
+      var A = grid[y0][x0], B = grid[y0][x0 + 1], C = grid[y0 + 1][x0], D = grid[y0 + 1][x0 + 1];
+      return { u: mix(mix(A.u, B.u, tx), mix(C.u, D.u, tx), ty),
+               v: mix(mix(A.v, B.v, tx), mix(C.v, D.v, tx), ty),
+               sp: mix(mix(A.sp, B.sp, tx), mix(C.sp, D.sp, tx), ty) };
+    }
+    function sampleHouse() {
+      var f = field(HOUSE[1], HOUSE[0]); if (!f) return;
+      var dirFrom = (Math.atan2(-f.u, -f.v) * 180 / Math.PI + 360) % 360;
+      var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+      var cell = grid[2][2];
+      houseWind = { sp: f.sp, gu: cell ? cell.gu : null, compass: dirs[Math.round(dirFrom / 22.5) % 16] };
+    }
+    function projX(lon) { return (lon - EXT.lonMin) / (EXT.lonMax - EXT.lonMin) * 1920; }
+    function projY(lat) { return (EXT.latMax - lat) / (EXT.latMax - EXT.latMin) * 1080; }
+
+    function drawBG() {
+      var c = $('windbg').getContext('2d');
+      c.clearRect(0, 0, 1920, 1080);
+      c.strokeStyle = 'rgba(90,120,190,.13)'; c.lineWidth = 1;
+      for (var lon = Math.ceil(EXT.lonMin * 2) / 2; lon <= EXT.lonMax; lon += 0.5) { c.beginPath(); c.moveTo(projX(lon), 0); c.lineTo(projX(lon), 1080); c.stroke(); }
+      for (var lat = Math.ceil(EXT.latMin * 2) / 2; lat <= EXT.latMax; lat += 0.5) { c.beginPath(); c.moveTo(0, projY(lat)); c.lineTo(1920, projY(lat)); c.stroke(); }
+      // CONFIG: labelled places on the wind chart — add your own nearby towns.
+      var cities = [['HOME', YOUR_LAT, YOUR_LON]];
+      c.font = '600 21px "Avenir Next", "Segoe UI", sans-serif';
+      cities.forEach(function (ct) {
+        var x = projX(ct[2]), y = projY(ct[1]);
+        c.fillStyle = 'rgba(200,216,245,.5)';
+        c.beginPath(); c.arc(x, y, 3.4, 0, 7); c.fill();
+        c.fillStyle = 'rgba(190,205,235,.55)'; c.fillText(ct[0].toUpperCase(), x + 12, y + 6);
+      });
+      // house
+      var hx = projX(HOUSE[1]), hy = projY(HOUSE[0]);
+      c.strokeStyle = 'rgba(246,207,175,.8)'; c.lineWidth = 2;
+      c.beginPath(); c.arc(hx, hy, 11, 0, 7); c.stroke();
+      c.fillStyle = '#F6CFAF'; c.beginPath(); c.arc(hx, hy, 4.4, 0, 7); c.fill();
+      c.font = '700 21px "Avenir Next", "Segoe UI", sans-serif';
+      c.fillText('HOME', hx + 20, hy + 6);
+      c.fillStyle = 'rgba(160,180,220,.4)'; c.font = 'italic 23px Georgia, serif';
+    }
+
+    var RAMP = [[0, [232, 238, 247]], [10, [127, 212, 255]], [20, [255, 201, 163]], [32, [255, 122, 176]]];
+    function ramp(sp) {
+      for (var i = 1; i < RAMP.length; i++) if (sp <= RAMP[i][0] || i === RAMP.length - 1) {
+        var a = RAMP[i - 1], b = RAMP[i], t = Math.max(0, Math.min(1, (sp - a[0]) / (b[0] - a[0])));
+        return [0, 1, 2].map(function (k) { return Math.round(a[1][k] + (b[1][k] - a[1][k]) * t); });
+      }
+    }
+    function spawn(p) {
+      p.lon = EXT.lonMin + Math.random() * (EXT.lonMax - EXT.lonMin);
+      p.lat = EXT.latMin + Math.random() * (EXT.latMax - EXT.latMin);
+      p.age = 0; p.max = 140 + Math.random() * 320;
+      p.px = null; p.py = null;
+    }
+    function frame() {
+      if (!running) return;
+      var cv = $('windcv'), ctx = cv.getContext('2d');
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.fillStyle = 'rgba(0,0,0,0.935)'; ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.lineCap = 'round';
+      var WARP = 3200, dt = 1 / 60 * WARP; // time-warped so streamlines travel px/frame, ∝ wind speed
+      for (var i = 0; i < P.length; i++) {
+        var p = P[i], f = field(p.lon, p.lat);
+        if (!f) break;
+        var ums = f.u * 0.44704, vms = f.v * 0.44704;
+        var nlon = p.lon + ums * dt / (111320 * Math.cos(p.lat * Math.PI / 180));
+        var nlat = p.lat + vms * dt / 110540;
+        var x0 = projX(p.lon) * (1600 / 1920), y0 = projY(p.lat) * (900 / 1080);
+        var x1 = projX(nlon) * (1600 / 1920), y1 = projY(nlat) * (900 / 1080);
+        if (p.px !== null && Math.abs(x1 - p.px) < 60 && Math.abs(y1 - p.py) < 60) {
+          var col = ramp(f.sp);
+          ctx.strokeStyle = 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (0.34 + Math.min(0.5, f.sp / 34)) + ')';
+          ctx.lineWidth = 1 + Math.min(2.1, f.sp / 15);
+          ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(x1, y1); ctx.stroke();
+        }
+        p.px = x1; p.py = y1; p.lon = nlon; p.lat = nlat; p.age++;
+        if (p.age > p.max || nlon < EXT.lonMin || nlon > EXT.lonMax || nlat < EXT.latMin || nlat > EXT.latMax) spawn(p);
+      }
+      raf = requestAnimationFrame(frame);
+    }
+    function startWind() {
+      if (running || !grid) return;
+      if (!P.length) for (var i = 0; i < N; i++) { var p = {}; spawn(p); p.age = Math.random() * p.max; P.push(p); }
+      running = true; frame();
+    }
+    function stopWind() { running = false; if (raf) cancelAnimationFrame(raf); }
+    return {
+      load: load, drawBG: drawBG,
+      start: startWind,
+      stop: stopWind,
+      isSpecimen: function () { return specimen; },
+      houseWind: function () { return houseWind; },
+      chrome: function () {
+        if (houseWind) {
+          $('headline').textContent = 'Wind ' + houseWind.compass + ' ' + Math.round(houseWind.sp) + ' mph' +
+            (houseWind.gu ? ', gusting ' + Math.round(houseWind.gu) : '') + ' — over the valley now';
+        } else $('headline').textContent = 'Wind made visible';
+        $('subline').textContent = 'Line speed and colour = wind speed · white, calm → magenta, storm';
+        $('dataline').innerHTML = 'surface wind · Open-Meteo (CC BY 4.0)' + (specimen ? '<br>SPECIMEN FIELD — live feed failed' : '');
+      }
+    };
+  })();
+
+  /* ================= 3. PLANET WINDOW ================= */
+  var Planet = (function () {
+    // CONFIG: pick your GOES sector (this is GOES-West / Pacific Southwest);
+    // other sectors live under cdn.star.nesdis.noaa.gov/GOES16|GOES18/ABI/SECTOR/
+    var SAT = 'https://cdn.star.nesdis.noaa.gov/GOES18/ABI/SECTOR/psw/GEOCOLOR/latest.jpg';
+    var shown = 'a', refreshed = 0, failed = false;
+    function load() {
+      var next = shown === 'a' ? 'b' : 'a', img = $('sat-' + next), pre = new Image();
+      pre.onload = function () {
+        img.src = pre.src;
+        img.className = 'sat on'; $('sat-' + shown).className = 'sat';
+        shown = next; refreshed = Date.now(); failed = false;
+        if (current === 'planet') updateChrome();
+      };
+      pre.onerror = function () { failed = true; if (current === 'planet') updateChrome(); };
+      pre.src = SAT + '?t=' + Date.now();
+    }
+    return {
+      load: load,
+      isFailed: function () { return failed && !refreshed; },
+      chrome: function () {
+        $('headline').textContent = 'The Pacific, from 36,000 km up';
+        $('subline').textContent = 'GOES-West GeoColor · Pacific Southwest sector · weather arriving off the ocean';
+        $('dataline').innerHTML = (refreshed ? 'image refreshed ' + fmtTime(new Date(refreshed)) : 'image —') + '<br>NOAA NESDIS · GOES-18';
+      }
+    };
+  })();
+
+  /* ================= 4. ALERT INTERRUPT (NWS) ================= */
+  var SPEC_ALERT = {
+    properties: {
+      event: 'Wind Advisory', headline: 'Wind Advisory issued for the coastal mountains and the valley',
+      areaDesc: 'Your County; Your Valley',
+      onset: new Date().toISOString(), expires: new Date(Date.now() + 5 * 3600e3).toISOString(),
+      severity: 'Moderate',
+      instruction: 'Gusty winds could blow around unsecured objects. Tree limbs could be blown down and a few power outages may result. Use extra caution when driving.'
+    }, geometry: null
+  };
+  function pollAlerts() {
+    fetch('https://api.weather.gov/alerts/active?point=' + YOUR_LAT + ',' + YOUR_LON, { headers: { 'Accept': 'application/geo+json' } })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (j) {
+        var feats = (j.features || []);
+        feats.sort(function (a, b) { return sevRank(b) - sevRank(a); });
+        var top = feats[0] || null;
+        alertState = top ? {
+          props: top.properties,
+          headlineOverride: top.properties.event + ' — ' + (top.properties.headline || ''),
+          feats: feats
+        } : null;
+        Radar.setPolygons(feats);
+        if (current === 'radar') updateChrome();
+      })
+      .catch(function () { /* alerts degrade silently; radar still carries polygons=none */ });
+  }
+  function sevRank(f) {
+    var s = (f.properties.severity || '').toLowerCase(), e = f.properties.event || '';
+    return (s === 'extreme' ? 40 : s === 'severe' ? 30 : s === 'moderate' ? 20 : 10) + (/warning/i.test(e) ? 5 : /watch/i.test(e) ? 3 : 0);
+  }
+  function showPoster(props, isSpec) {
+    var ev = props.event || 'Weather Alert';
+    $('poster').className = 'on ' + (/warning/i.test(ev) ? 'warn' : /watch/i.test(ev) ? 'watch' : 'adv') + (isSpec ? ' spec' : '');
+    $('p-event').textContent = ev;
+    $('p-event').style.fontSize = ev.length > 22 ? '104px' : '148px';
+    $('p-head').textContent = props.headline || '';
+    var exp = props.expires || props.ends;
+    $('p-meta').innerHTML = (props.areaDesc || '') + (exp ? '<br>Until ' + fmtTime(new Date(exp)) : '');
+    $('p-instr').textContent = props.instruction || props.description && (props.description || '').slice(0, 340) || '';
+    posterUntil = Date.now() + 90000;
+  }
+  function hidePoster() { $('poster').className = ''; lastPosterEnd = Date.now(); posterUntil = 0; }
+
+  /* ================= Rotation ================= */
+  function rotationOrder() {
+    var lead = 'planet';
+    if (Radar.hasEcho()) lead = 'radar';
+    else { var hw = Wind.houseWind(); if (hw && hw.sp >= 12) lead = 'wind'; }
+    return [lead].concat(SCENES.filter(function (s) { return s !== lead; }));
+  }
+  var order = ['radar', 'wind', 'planet'], oIdx = 0;
+  function nextScene() {
+    if (posterUntil) return;
+    oIdx++;
+    if (oIdx >= order.length) { order = rotationOrder(); oIdx = 0; }
+    showScene(order[oIdx]);
+  }
+  function rotationTick() {
+    if (QA) return;
+    if (posterUntil) { if (Date.now() > posterUntil) { hidePoster(); nextScene(); } return; }
+    if (alertState && Date.now() - lastPosterEnd > 200000) { showPoster(alertState.props, false); return; }
+    nextScene();
+  }
+
+  /* ================= Boot ================= */
+  Radar.build();
+  Wind.drawBG();
+  Wind.load(); Radar.refresh(); Planet.load(); pollAlerts();
+  setInterval(Radar.refresh, 5 * 60e3);
+  setInterval(Planet.load, 5 * 60e3);
+  setInterval(pollAlerts, 60e3);
+  setInterval(Wind.load, 60 * 60e3);
+  setInterval(updateChrome, 30e3);
+
+  // burn-in hygiene: pixel-shift the chrome cluster every 5 minutes
+  var SHIFTS = [[0, 0], [5, 3], [-4, 5], [3, -4], [-5, -3]], shI = 0;
+  setInterval(function () { shI = (shI + 1) % SHIFTS.length; $('chrome').style.transform = 'translate(' + SHIFTS[shI][0] + 'px,' + SHIFTS[shI][1] + 'px)'; }, 5 * 60e3);
+
+  if (QA && SCENES.indexOf(QA) >= 0) {
+    showScene(QA);
+  } else if (QA === 'poster') {
+    showScene('radar');
+    setTimeout(function () { showPoster(alertState ? alertState.props : SPEC_ALERT.properties, !alertState); }, 600);
+  } else {
+    order = rotationOrder();
+    showScene(order[0]);
+    setInterval(rotationTick, 240e3); // ~4 min per scene (poster checks ride this tick + a faster one below)
+    setInterval(function () { // poster responsiveness between rotation ticks
+      if (posterUntil && Date.now() > posterUntil) { hidePoster(); nextScene(); }
+      else if (!posterUntil && alertState && Date.now() - lastPosterEnd > 200000 && !QA) showPoster(alertState.props, false);
+    }, 5000);
+    lastPosterEnd = Date.now() - 120000; // first poster (if any) may appear ~80 s in, not instantly
+  }
+})();
+</script>
+</body>
+</html>

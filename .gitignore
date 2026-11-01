@@ -1,0 +1,17 @@
+# Credentials and environment — never commit
+.env
+.env.*
+*.env
+*credential*
+*secret*
+*token*
+
+# Python
+__pycache__/
+*.pyc
+
+# Runtime output
+*.log
+*.bak
+iss.json
+gallery-watch-state.json

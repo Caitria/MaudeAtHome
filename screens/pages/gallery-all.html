@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gallery — The Full Program</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #17100C; }
+  body { font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif; color: #FFF7EE; }
+
+  .layer { position: fixed; inset: 0; background-size: cover; background-position: center;
+    opacity: 0; transition: opacity 2.6s ease-in-out; will-change: opacity, transform; }
+  .layer.show { opacity: 1; animation: kb 68s ease-in-out forwards; }
+  @keyframes kb { from { transform: scale(1.0); } to { transform: scale(1.07); } }
+  .shade { position: fixed; inset: 0; pointer-events: none;
+    background: linear-gradient(78deg, rgba(23,12,6,.30) 0%, rgba(23,12,6,0) 42%),
+                linear-gradient(0deg, rgba(23,12,6,.26) 0%, rgba(23,12,6,0) 30%); }
+
+  .glass { background: rgba(38, 22, 14, .32); border: 1px solid rgba(255, 240, 220, .28); border-radius: 26px;
+    box-shadow: 0 18px 44px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.18);
+    backdrop-filter: blur(13px) saturate(1.2); -webkit-backdrop-filter: blur(13px) saturate(1.2); }
+
+  #clockchip { position: fixed; top: 3.2%; right: 3.4%; padding: 8px 18px; border-radius: 999px; opacity: .82;
+    font-size: clamp(14px, 1.2vw, 23px); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+  #clockchip .dow { opacity: .75; font-weight: 500; }
+
+  #panel { position: fixed; left: 3.4%; bottom: 4.5%; width: min(600px, 44vw); padding: 20px 26px 15px;
+    transition: opacity 1.1s ease, width .8s ease, padding .8s ease; }
+  #panel.fade { opacity: 0; }
+  #panel.mini { width: auto; max-width: 46vw; padding: 13px 22px 11px; }
+  #panel.mini .kicker, #panel.mini #facts, #panel.mini #credit { display: none; }
+  #panel.mini #title { font-size: clamp(18px, 1.5vw, 28px); display: inline; }
+  #panel.mini #byline { display: inline; margin-left: 10px; }
+  #panel.mini #mini-credit { display: block; }
+  #mini-credit { display: none; font-size: clamp(10.5px, .78vw, 14.5px); color: rgba(255,235,215,.72); margin-top: 4px; }
+  .kicker { font-size: clamp(11px, .85vw, 16px); letter-spacing: .26em; text-transform: uppercase; color: #FFC9A3; font-weight: 700; margin-bottom: 10px; }
+  #title { font-size: clamp(24px, 2.3vw, 44px); transition: font-size .8s ease; } font-weight: 650; line-height: 1.06; letter-spacing: -.01em; }
+  #byline { font-size: clamp(15px, 1.15vw, 22px); color: #FFE3CB; margin-top: 8px; font-weight: 550; }
+  #facts { margin-top: 11px; transition: opacity .7s ease; }
+  #facts p { font-size: clamp(14px, 1.08vw, 20.5px); line-height: 1.45; color: rgba(255,247,238,.94); margin: 7px 0; }
+  #credit { margin-top: 12px; padding-top: 9px; transition: opacity .7s ease; border-top: 1px solid rgba(255,240,220,.22);
+    font-size: clamp(13px, 1.0vw, 19px); color: rgba(255,235,215,.78); }
+
+  #dots { position: fixed; right: 3.4%; bottom: 4.5%; display: flex; align-items: center; gap: 8px; padding: 8px 15px; border-radius: 999px; opacity: .8; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,240,220,.35); transition: all .6s; }
+  .dot.on { background: #FFC9A3; transform: scale(1.35); }
+  #count { font-size: clamp(11.5px, .85vw, 16px); color: rgba(255,235,215,.85); font-variant-numeric: tabular-nums; margin-left: 6px; }
+</style>
+</head>
+<body>
+  <div class="layer" id="layerA"></div>
+  <div class="layer" id="layerB"></div>
+  <div class="shade"></div>
+
+  <div id="clockchip" class="glass"><span class="dow"></span><span id="clock">--:--</span></div>
+
+  <div id="panel" class="glass">
+    <div class="kicker" id="kicker"></div>
+    <div id="title"></div>
+    <div id="byline"></div>
+    <div id="facts"></div>
+    <div id="credit"></div>
+    <div id="mini-credit"></div>
+  </div>
+
+  <div id="dots" class="glass"></div>
+
+<script>
+  var PIECES = [
+    { img: 'img/mcway.jpg', kind: 'Photograph · Big Sur, California',
+      title: 'McWay Falls', byline: 'King of Hearts · 2011',
+      facts: ['An 80-foot waterfall pours out of McWay Creek onto the sand of a hidden cove in Julia Pfeiffer Burns State Park.',
+              'It is one of the very few waterfalls on the California coast that lands on the beach — at high tide it meets the surf directly, which makes it a “tidefall.”'],
+      credit: 'Photo: King of Hearts · CC BY-SA 3.0 · via Wikimedia Commons'},
+    { img: 'img-art/monet-sunrise.jpg', kind: 'Painting · 1872 · Musée Marmottan Monet, Paris',
+      title: 'Impression, Sunrise', byline: 'Claude Monet',
+      facts: ['This hazy Le Havre harbour scene named a movement: a hostile critic mocked its title, “Impression,” in 1874 — and “Impressionism” stuck.',
+              'It was stolen from the Marmottan museum in a famous 1985 art heist, and recovered five years later in Corsica.'],
+      credit: 'Painting: Claude Monet, 1872 · Public domain · via Wikimedia Commons'},
+    {img: 'img/bixby.jpg', kind: 'Photograph · Highway 1, Big Sur',
+      title: 'Bixby Creek Bridge', byline: 'Aaron Albrecht',
+      facts: ['Opened in 1932, before the highway around it was finished — at the time it was one of the tallest single-span concrete arch bridges in the world, 714 feet long.',
+              'It is named for Charles Henry Bixby, who ranched the canyon below and built a lime kiln and a landing there in the 1800s.'],
+      credit: 'Photo: Aaron Albrecht · CC BY 3.0 · via Wikimedia Commons'},
+    {img: 'img-art/turner.jpg', kind: 'Painting · 1839 · National Gallery, London',
+      title: 'The Fighting Temeraire', byline: 'J. M. W. Turner',
+      facts: ['HMS Temeraire, a hero of Trafalgar in 1805, is shown on her last voyage in 1838 — towed up the Thames to be broken up for scrap.',
+              'Turner cheated for pathos: the real ship had already lost her masts and guns. He refused to sell the painting, calling it his “darling,” and it was voted Britain’s favourite painting in a 2005 poll.'],
+      credit: 'Painting: J. M. W. Turner, 1839 · Public domain · via Wikimedia Commons'},
+    {img: 'img/diablo.jpg', kind: 'Photograph · East Bay, California',
+      title: 'Sunset, near Mount Diablo', byline: 'Debbie Tee',
+      facts: ['Mount Diablo’s summit view is famous: on the clearest days it is said to take in parts of some 40 California counties, from the Sierra Nevada to Lassen Peak.',
+              'The mountain is a sacred place in Miwok and Ohlone tradition, woven into their creation stories.'],
+      credit: 'Photo: Debbie Tee · CC BY-SA 4.0 · via Wikimedia Commons'},
+    {img: 'img-art/vangogh-wheatfield.jpg', kind: 'Painting · 1889 · National Gallery, London',
+      title: 'Wheatfield with Cypresses', byline: 'Vincent van Gogh',
+      facts: ['Painted at Saint-Rémy in the summer of 1889, weeks after The Starry Night — Van Gogh counted it among his finest canvases and painted three versions.',
+              'The wheat and cypresses bend under the mistral, the fierce Provençal wind he wrote about to his brother Theo.'],
+      credit: 'Painting: Vincent van Gogh, 1889 · Public domain · via Wikimedia Commons'},
+    {img: 'img/yosemite.jpg', kind: 'Photograph · Yosemite National Park',
+      title: 'Yosemite Valley Sunset', byline: 'Mike Norton',
+      facts: ['The valley was carved by glaciers through solid granite; its walls rise 3,000 feet and more above the Merced River.',
+              'This golden-hour vantage is the one photographers still gather at — and the same valley Albert Bierstadt painted, elsewhere in this set.'],
+      credit: 'Photo: Mike Norton · CC BY 2.0 · via Wikimedia Commons'},
+    {img: 'img-art/botticelli.jpg', kind: 'Painting · c. 1485 · Uffizi, Florence',
+      title: 'The Birth of Venus', byline: 'Sandro Botticelli',
+      facts: ['Venus arrives at Cyprus blown ashore on a shell by Zephyrus, god of the west wind. It was the first nearly life-size female nude in Western painting since antiquity.',
+              'The face of Venus is traditionally said to be Simonetta Vespucci, the celebrated Florentine beauty who modelled for Botticelli again and again.'],
+      credit: 'Painting: Sandro Botticelli, c. 1485 · Public domain · via Wikimedia Commons'},
+    {img: 'img/bierstadt.jpg', kind: 'Painting · 1868',
+      title: 'Sunset in the Yosemite Valley', byline: 'Albert Bierstadt · Hudson River School',
+      facts: ['Bierstadt’s glowing, monumental canvases were many Americans’ first sight of the West — painted for eastern audiences after his 1863 journey to California.',
+              'He took liberties: the peaks are heightened, and the light heightened further. The painting now hangs at the Haggin Museum in Stockton, California.'],
+      credit: 'Painting: Albert Bierstadt, 1868 · Public domain · via Wikimedia Commons'},
+    {img: 'img-art/rembrandt.jpg', kind: 'Painting · 1642 · Rijksmuseum, Amsterdam',
+      title: 'The Night Watch', byline: 'Rembrandt van Rijn',
+      facts: ['It is not night at all: the company is marching out in daylight. Centuries of darkened varnish earned it the wrong name; cleaning in the 1940s brought back the day.',
+              'In 1715 the canvas was trimmed on all four sides to fit a wall in Amsterdam’s town hall — figures at the left edge were lost for good. It is Rembrandt’s largest painting.'],
+      credit: 'Painting: Rembrandt van Rijn, 1642 · Public domain · via Wikimedia Commons'},
+    {img: 'img/starry.jpg', kind: 'Painting · 1889',
+      title: 'The Starry Night', byline: 'Vincent van Gogh',
+      facts: ['Painted in June 1889 at the Saint-Paul-de-Mausole asylum in Saint-Rémy, France. The view is from his window — but the village below is imagined, added from memory.',
+              'The blazing “morning star” is Venus, which really was exceptionally bright that spring. The painting hangs today at MoMA in New York.'],
+      credit: 'Painting: Vincent van Gogh, 1889 · Public domain · via Wikimedia Commons'},
+    {img: 'img-art/hokusai-fuji.jpg', kind: 'Woodblock print · c. 1831 · from Thirty-six Views of Mount Fuji',
+      title: 'Fine Wind, Clear Morning (“Red Fuji”)', byline: 'Katsushika Hokusai',
+      facts: ['On still late-summer mornings a south wind and the rising sun can tint Mount Fuji red — Hokusai caught the mountain in that brief seasonal glow.',
+              'It is the calm twin of his Great Wave: same mountain, same imported Prussian blue sky, no drama at all.'],
+      credit: 'Print: Katsushika Hokusai, c. 1831 · Public domain · via Wikimedia Commons'},
+    {img: 'img/wave.jpg', kind: 'Woodblock print · c. 1831',
+      title: 'Under the Wave off Kanagawa', byline: 'Katsushika Hokusai · “The Great Wave”',
+      facts: ['Look beneath the wave’s claw: snow-capped Mount Fuji sits small and calm in the distance. The print belongs to his series “Thirty-six Views of Mount Fuji.”',
+              'That electric blue is Prussian blue, a synthetic pigment newly imported to Japan — Hokusai’s use of it made the colour famous.'],
+      credit: 'Print: Katsushika Hokusai, c. 1831 · Public domain · via Wikimedia Commons' },
+    {img: 'img-art/seurat.jpg', kind: 'Painting · 1884–86 · Art Institute of Chicago',
+      title: 'A Sunday Afternoon on the Island of La Grande Jatte', byline: 'Georges Seurat',
+      facts: ['Parisians idle on an island in the Seine, and none of them are painted with a single blended stroke: the whole enormous canvas is built from distinct dots and dashes of pure colour — Pointillism.',
+              'Seurat spent two years on it, making some sixty studies. At roughly two by three metres, it is meant to be stepped back from — the dots fuse only at a distance.'],
+      credit: 'Painting: Georges Seurat, 1884–86 · Public domain · via Wikimedia Commons'},
+    {img: 'img-art/bruegel.jpg', kind: 'Painting · 1565 · Kunsthistorisches Museum, Vienna',
+      title: 'The Hunters in the Snow', byline: 'Pieter Bruegel the Elder',
+      facts: ['From Bruegel’s cycle of the seasons: hunters trudge home with a single fox between them while the whole village skates, plays, and burns brush below.',
+              'It was painted during one of the harshest winters of the Little Ice Age — the frozen ponds and bare trees were reportage, not fantasy. Five of the season panels survive.'],
+      credit: 'Painting: Pieter Bruegel the Elder, 1565 · Public domain · via Wikimedia Commons' }
+  ];
+
+  PIECES.forEach(function(p){ var i = new Image(); i.src = p.img; });
+
+  var idx = 0, showingA = true;
+  var layerA = document.getElementById('layerA'), layerB = document.getElementById('layerB');
+  var panel = document.getElementById('panel');
+  var dotsEl = document.getElementById('dots');
+  PIECES.forEach(function(_, i){ var d = document.createElement('span'); d.className = 'dot' + (i===0?' on':''); dotsEl.appendChild(d); });
+  var count = document.createElement('span'); count.id = 'count'; dotsEl.appendChild(count);
+
+  function fill(p) {
+    document.getElementById('kicker').textContent = p.kind;
+    document.getElementById('title').textContent = p.title;
+    document.getElementById('byline').textContent = p.byline;
+    document.getElementById('facts').innerHTML = p.facts.map(function(f){ return '<p>' + f + '</p>'; }).join('');
+    document.getElementById('credit').textContent = p.credit;
+    document.getElementById('mini-credit').textContent = p.credit;
+    count.textContent = (idx + 1) + ' / ' + PIECES.length;
+    Array.prototype.forEach.call(dotsEl.querySelectorAll('.dot'), function(d, i){ d.className = 'dot' + (i===idx?' on':''); });
+  }
+  function show(i) {
+    var showLayer = showingA ? layerB : layerA, hideLayer = showingA ? layerA : layerB;
+    showLayer.style.backgroundImage = 'url(' + PIECES[i].img + ')';
+    showLayer.classList.remove('show'); void showLayer.offsetWidth; showLayer.classList.add('show');
+    hideLayer.classList.remove('show');
+    showingA = !showingA;
+    panel.classList.add('fade');
+    setTimeout(function(){ panel.classList.remove('mini'); fill(PIECES[i]); panel.classList.remove('fade'); armCollapse(); }, 900);
+  }
+  var collapseTimer = null;
+  function armCollapse(){ if (collapseTimer) clearTimeout(collapseTimer); collapseTimer = setTimeout(function(){ panel.classList.add('mini'); }, 22000); }
+  layerA.style.backgroundImage = 'url(' + PIECES[0].img + ')';
+  layerA.classList.add('show'); fill(PIECES[0]); armCollapse();
+  setInterval(function(){ idx = (idx + 1) % PIECES.length; show(idx); }, 60000);
+
+  function tick() {
+    var d = new Date(), h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    document.getElementById('clock').textContent = h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  tick(); setInterval(tick, 15000);
+</script>
+</body>
+</html>
