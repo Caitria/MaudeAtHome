@@ -71,6 +71,32 @@ speak MCP — copying the tool shapes already proven by PHOS and
 stackchan-mcp. The HTTP contract stays the core: cron jobs and shell
 scripts are agents too, and they do not speak MCP.
 
+### Plugging in a bare LLM
+
+Yes — in two patterns, and the distinction matters:
+
+1. **An agent runtime around a model** — Muse, OpenClaw, a local
+   agent loop driving Ollama — already *is* an agent under §1. It calls
+   the three operations above and nothing special is needed. This is the
+   common case: the LLM lives inside the agent, and the stage never knows
+   or cares which model it is.
+2. **A raw model endpoint** — a Claude/OpenAI API, a local Ollama with no
+   loop around it — is not an agent. It cannot decide to call anything.
+   It plugs in through a thin **brain adapter**: a small program that
+   owns the prompt and the context, calls the model, and translates its
+   reply into stage calls. The inline directives of §3 (`[[face:happy]]`
+   and friends) exist precisely as this adapter's parsing surface, and
+   the adapter is where a per-model permission profile belongs — what
+   this brain may post, and whether it may initiate inside a grant window
+   (§6), are the adapter's rules, set by the owner. Precedent:
+   agent-faces puts its brain behind one `/api/chat` seam and swaps
+   Claude Code, OpenClaw, Hermes, and Ollama backends through it.
+
+Either way, the seam holds: **the stage never calls a model itself.**
+Intelligence lives on the agent side; the stage stays a stage — which is
+also why a stage with no brain at all, fed by a cron job posting the
+weather twice a day, is a legitimate configuration and not a broken one.
+
 ## 3. State and face vocabulary
 
 Deliberately small, and deliberately the vocabulary independent projects
